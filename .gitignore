@@ -1,0 +1,19 @@
+/all_generations.csv
+/Convergence_avg.csv
+/Convergence_max.csv
+/Convergence_min.csv
+/feasible_points.csv
+/final_population.csv
+/HV_normalised.csv
+/last10_gens.csv
+/MQ-9.vsp3
+/MQ-9_CompGeom.csv
+/MQ-9_CompGeom.txt
+/MQ-9_ParasiteBuildUp.csv
+/output_vsp_files
+/Parasitic Drag Analysis_test.py
+/PD_Analysis_test2.py
+/PD_params.py
+/Post_Gen_Data
+/temporary_population.csv
+/Unnamed_ParasiteBuildUp.csv

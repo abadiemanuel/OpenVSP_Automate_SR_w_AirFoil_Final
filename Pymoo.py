@@ -4,7 +4,7 @@ import concurrent.futures
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from jupyterlab.commands import enable_extension
+#from jupyterlab.commands import enable_extension #commented due to import error, but jupiterlabs is not being used
 from pymoo.core.crossover import Crossover
 from pymoo.core.sampling import Sampling
 from pymoo.core.variable import Choice, Real, Integer

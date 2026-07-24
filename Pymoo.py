@@ -4,7 +4,7 @@ import concurrent.futures
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-#from jupyterlab.commands import enable_extension
+from jupyterlab.commands import enable_extension
 from pymoo.core.crossover import Crossover
 from pymoo.core.sampling import Sampling
 from pymoo.core.variable import Choice, Real, Integer
@@ -39,6 +39,11 @@ N_PARALLEL_WORKERS = min(os.cpu_count() or 3, 3)  # Balanced for 24-core system
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 print(f"Parallel workers: {N_PARALLEL_WORKERS} (CPUs detected: {os.cpu_count()})")
 
+# Scan airfoils folder for available airfoil .dat files
+AIRFOIL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "airfoils")
+AIRFOIL_OPTIONS = sorted([os.path.basename(f) for f in glob.glob(os.path.join(AIRFOIL_DIR, "*.dat"))])
+print(f"Available airfoils ({len(AIRFOIL_OPTIONS)}): {AIRFOIL_OPTIONS}")
+
 Span=tuple(Wing_span)#Design Variable
 power = tuple(Eng_pow)
 print(Span)
@@ -70,6 +75,9 @@ mixed_vars = {
     "Wing_Position":Choice(options=["Low", "Mid", "High"]),
     "Tail_Type":Choice(options=["Conventional", "T-Tail", "Cruciform", "Dual-Tail", "V-Tail", "Inverted_V-Tail", "Y-Tail",
              "Inverted_Y-Tail"]),
+    "Wing_Airfoil":Choice(options=AIRFOIL_OPTIONS),
+    "HTail_Airfoil":Choice(options=AIRFOIL_OPTIONS),
+    "VTail_Airfoil":Choice(options=AIRFOIL_OPTIONS),
 }
 #print(pd.DataFrame(list(mixed_vars)))
 
@@ -106,7 +114,6 @@ class Genetic(Problem):
         self.current_generation = 0
         self.candidate_counter = 0
         self.total_candidates_per_gen = []
-        self.all_generation_records = []
 
     @staticmethod
     def _run_worker(i, vsp_file_abs, engine_power, cg_val):
@@ -258,20 +265,10 @@ class Genetic(Problem):
         # ── Phase 3: Collect results ──────────────────────────────────
         F, G = [], []
         for i in range(n_candidates):
-            design_row = temp_df.iloc[i:i+1]
-            design_record = design_row.iloc[0].to_dict()
-            design_record["Generation"] = self.current_generation
-            design_record["Candidate"] = i + 1
-
             # Geometry creation failed
             if i in geometry_errors:
                 F.append([1e6, -1.0, -100.0])
                 G.append([1e6, 1e6, 1e6])
-                design_record["Area"] = 1e6
-                design_record["L2D"] = -1.0
-                design_record["Config"] = -100.0
-                design_record["Eval_Success"] = False
-                self.all_generation_records.append(design_record)
                 continue
 
             result = worker_results.get(i)
@@ -280,14 +277,10 @@ class Genetic(Problem):
                 print(f"    Design {i} failed: {error_msg[:150]}")
                 F.append([1e6, -1.0, -100.0])
                 G.append([1e6, 1e6, 1e6])
-                design_record["Area"] = 1e6
-                design_record["L2D"] = -1.0
-                design_record["Config"] = -100.0
-                design_record["Eval_Success"] = False
-                self.all_generation_records.append(design_record)
                 continue
 
             try:
+                design_row = vsp_jobs[i][2]
                 f_1 = float(result["cost"])
                 f_2 = float(sum(result["area"]))
                 f_3 = float(-result["L2D"])  # Negate for minimization
@@ -304,27 +297,10 @@ class Genetic(Problem):
                 F.append([f_2,f_3,f_4])
                 G.append([constraint_1, constraint_2, constraint_3])
                 print(f"    Design {i}: cost={f_1:.2f}, area={f_2:.2f}, L/D={-f_3:.2f}, config_score={f_4:.2f}")
-
-                design_record["Area"] = f_2
-                design_record["L2D"] = -f_3
-                design_record["Config"] = f_4
-                design_record["Eval_Success"] = True
-                alpha_sweep = result.get("alpha_sweep", [])
-                l2d_sweep = result.get("L2D_sweep", [])
-                for idx, alpha_value in enumerate(alpha_sweep, start=1):
-                    design_record[f"AoA_{idx}"] = alpha_value
-                for idx, l2d_value in enumerate(l2d_sweep, start=1):
-                    design_record[f"L2D_{idx}"] = l2d_value
-                self.all_generation_records.append(design_record)
             except Exception as e:
                 print(f"    Design {i} result parsing failed: {type(e).__name__}: {str(e)[:150]}")
                 F.append([1e6, -1.0, -100.0])
                 G.append([1e6, 1e6, 1e6])
-                design_record["Area"] = 1e6
-                design_record["L2D"] = -1.0
-                design_record["Config"] = -100.0
-                design_record["Eval_Success"] = False
-                self.all_generation_records.append(design_record)
 
         out["F"] = np.array(F)
         out["G"] = np.array(G)
@@ -343,19 +319,19 @@ class Genetic(Problem):
 problem = Genetic()
 
 algorithm = NSGA2(
-    pop_size=5,
+    pop_size=1,
     sampling=MixedVariableSampling(),
     mating=MixedVariableMating(eliminate_duplicates= MixedVariableDuplicateElimination()),
     eliminate_duplicates=False
 )
 
-n_gen =2
+n_gen = 3
 
 res = minimize(
     problem,
     algorithm,
     ('n_gen', n_gen),
-    seed = 42,#42,
+    seed = 35,#42,
     save_history = True,
     verbose = False  # Changed to True to see progress
 )
@@ -432,29 +408,18 @@ HV_df = pd.DataFrame(gen_hv)
 HV_df.to_csv("HV_normalised.csv",index=False)
 
 # Saving ALL generation history with named columns
-if problem.all_generation_records:
-    all_gens_df = pd.DataFrame(problem.all_generation_records)
-else:
-    all_generations_df = []
-    for i, gen in enumerate(res.history):
-        X = gen.pop.get("X")
-        F = gen.pop.get("F")
-        df = pd.DataFrame(list(X), columns=var_names)
-        df['Area'] = F[:,0]
-        df['L2D'] = -F[:,1]
-        df['Config'] = -F[:,2]
-        df['Generation'] = i+1
-        all_generations_df.append(df)
+all_generations_df = []
+for i, gen in enumerate(res.history):
+    X = gen.pop.get("X")
+    F = gen.pop.get("F")
+    df = pd.DataFrame(list(X), columns=var_names)
+    df['Area'] = F[:,0]
+    df['L2D'] = -F[:,1]
+    df['Config'] = -F[:,2]
+    df['Generation'] = i+1
+    all_generations_df.append(df)
 
-    all_gens_df = pd.concat(all_generations_df, ignore_index=True)
-
-ordered_cols = [c for c in ["Generation", "Candidate"] if c in all_gens_df.columns]
-ordered_cols += [c for c in var_names if c in all_gens_df.columns]
-ordered_cols += [c for c in ["Area", "L2D", "Config", "Eval_Success"] if c in all_gens_df.columns]
-aoa_cols = sorted([c for c in all_gens_df.columns if c.startswith("AoA_")], key=lambda name: int(name.split("_")[1]))
-l2d_cols = sorted([c for c in all_gens_df.columns if c.startswith("L2D_")], key=lambda name: int(name.split("_")[1]))
-remaining_cols = [c for c in all_gens_df.columns if c not in ordered_cols + aoa_cols + l2d_cols]
-all_gens_df = all_gens_df[ordered_cols + aoa_cols + l2d_cols + remaining_cols]
+all_gens_df = pd.concat(all_generations_df, ignore_index=True)
 all_gens_df.to_csv("all_generations.csv", index=False)
 # Also keep last10_gens.csv for backward compatibility
 last10_df = all_gens_df[all_gens_df["Generation"] <= 2]

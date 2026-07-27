@@ -146,6 +146,8 @@ class Aero:
         print("Extracting aerodynamic data...")
         CLtot = vsp.GetDoubleResults(history_res, "CLtot")
         CDtot = vsp.GetDoubleResults(history_res, "CDtot")
+        CDi = vsp.GetDoubleResults(history_res, "CDi")
+        CD0 = vsp.GetDoubleResults(history_res, "CD0")
         L2D = vsp.GetDoubleResults(history_res, "L/D")
         E = vsp.GetDoubleResults(history_res, "E")
         # CMx/CMy/CMz may not be available in VLM mode without stability analysis
@@ -183,7 +185,56 @@ class Aero:
         
         print(f"VSPAero analysis successful: L/D = {final_L2D:.2f}")
         vsp.ClearVSPModel()
-        return final_L2D, CDtot[-1], CMy_delta, CLtot[-1], E[-1]
+        return final_L2D, CDtot[-1], CMy_delta, CLtot[-1], E[-1], CD0[-1], CDi[-1]
+
+    def ParasiticDrag(self):
+        """
+        Run OpenVSP's ParasiteDrag analysis and return Total_CD_Total.
+        """
+        print(f"Starting ParasiticDrag analysis for: {self.path}")
+
+        analysis_name = "ParasiteDrag"
+        vsp.VSPRenew()
+        vsp.ClearVSPModel()
+        vsp.ReadVSPFile(self.path)
+        vsp.Update()
+
+        vsp.SetAnalysisInputDefaults(analysis_name)
+        vsp.SetIntAnalysisInput(analysis_name, "LengthUnit", [2])
+        vsp.SetIntAnalysisInput(analysis_name, "VelocityUnit", [1])
+        vsp.SetIntAnalysisInput(analysis_name, "AltLengthUnit", [1])
+        vsp.SetIntAnalysisInput(analysis_name, "GeomSet", [0])
+        vsp.SetIntAnalysisInput(analysis_name, "RefFlag", [0])
+        vsp.SetDoubleAnalysisInput(analysis_name, "Sref", [100.0])
+
+        cruise_ceiling = float(inputs.get("cruise_ceiling", 0.0))
+        cruise_speed = float(inputs.get("cruise_speed", 0.0))
+
+        vsp.SetDoubleAnalysisInput(analysis_name, "Altitude", [cruise_ceiling])
+        vsp.SetDoubleAnalysisInput(analysis_name, "Vinf", [cruise_speed])
+        vsp.SetIntAnalysisInput(analysis_name, "RecomputeGeom", [1])
+
+        print("Executing ParasiteDrag analysis...")
+        try:
+            result_id = vsp.ExecAnalysis(analysis_name)
+        except Exception as e:
+            vsp.ClearVSPModel()
+            raise RuntimeError(f"ParasiteDrag execution failed: {e}")
+
+        if not result_id or result_id == "":
+            vsp.ClearVSPModel()
+            raise RuntimeError("ParasiteDrag analysis did not complete successfully")
+
+        result_obj = vsp.parse_results_object(result_id)
+        total_cd_total = getattr(result_obj, "Total_CD_Total", None)
+        if not total_cd_total:
+            vsp.ClearVSPModel()
+            raise RuntimeError("ParasiteDrag returned no Total_CD_Total results")
+
+        cd0_total = total_cd_total[0]
+        print(f"ParasiteDrag analysis successful: Total_CD_Total = {cd0_total:.6f}")
+        vsp.ClearVSPModel()
+        return cd0_total
 
 
         #print(f"Coeffiecient of lift:{CL[-1]}\n Total Drag:{CDtot[-1]}\n Lift_to_Drag:{L2D[-1]}\n CMy:{CMy[-1]}\n E:{E[-1]}")
@@ -202,7 +253,8 @@ class Aero:
         print("\n=== Starting objective computation ===")
         area = self.ComputeArea()
         self.ComputeGeom()
-        L2D,Cdtotal,CMy,Cl,E = self.VSPAero()
+        L2D, CDtot, CMy,CLtot,E, CD0, CDi = self.VSPAero()
+        cd0_total = self.ParasiticDrag()
         if L2D >50: # Based on highest achieved by ETA gliders
           L2D = 50
         cost = self.cost()
@@ -219,5 +271,5 @@ class Aero:
         #return total, L2D,CMy, Cl, Cdtotal, cost,area
         print(f"Objectives: cost={cost:.2f}, area={sum(area):.2f}, L/D={L2D:.2f}, CMy={CMy:.4f}")
         print("=== Objective computation complete ===\n")
-        return cost, area, -L2D, CMy
+        return cost, area, -L2D, CMy, CLtot, CDi, CD0, cd0_total
 

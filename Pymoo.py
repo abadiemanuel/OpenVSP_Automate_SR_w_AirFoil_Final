@@ -114,6 +114,7 @@ class Genetic(Problem):
         self.current_generation = 0
         self.candidate_counter = 0
         self.total_candidates_per_gen = []
+        self.evaluation_records = []
 
     @staticmethod
     def _run_worker(i, vsp_file_abs, engine_power, cg_val):
@@ -265,10 +266,27 @@ class Genetic(Problem):
         # ── Phase 3: Collect results ──────────────────────────────────
         F, G = [], []
         for i in range(n_candidates):
+            design_row = temp_df.iloc[i]
+            base_row = design_row.to_dict()
+            base_row["Generation"] = self.current_generation
+
             # Geometry creation failed
             if i in geometry_errors:
                 F.append([1e6, -1.0, -100.0])
                 G.append([1e6, 1e6, 1e6])
+                base_row.update({
+                    "Area": 1e6,
+                    "L2D": -1.0,
+                    "Config": -100.0,
+                    "CMy": np.nan,
+                    "cd0_total": np.nan,
+                    "CD_vsp": np.nan,
+                    "CD_hyb": np.nan,
+                    "CLtot": np.nan,
+                    "L/D_2": np.nan,
+                    "CDi": np.nan,
+                })
+                self.evaluation_records.append(base_row)
                 continue
 
             result = worker_results.get(i)
@@ -277,6 +295,19 @@ class Genetic(Problem):
                 print(f"    Design {i} failed: {error_msg[:150]}")
                 F.append([1e6, -1.0, -100.0])
                 G.append([1e6, 1e6, 1e6])
+                base_row.update({
+                    "Area": 1e6,
+                    "L2D": -1.0,
+                    "Config": -100.0,
+                    "CMy": np.nan,
+                    "cd0_total": np.nan,
+                    "CD_vsp": np.nan,
+                    "CD_hyb": np.nan,
+                    "CLtot": np.nan,
+                    "L/D_2": np.nan,
+                    "CDi": np.nan,
+                })
+                self.evaluation_records.append(base_row)
                 continue
 
             try:
@@ -297,10 +328,37 @@ class Genetic(Problem):
                 F.append([f_2,f_3,f_4])
                 G.append([constraint_1, constraint_2, constraint_3])
                 print(f"    Design {i}: cost={f_1:.2f}, area={f_2:.2f}, L/D={-f_3:.2f}, config_score={f_4:.2f}")
+
+                base_row.update({
+                    "Area": f_2,
+                    "L2D": -f_3,
+                    "Config": f_4,
+                    "CMy": constraint_1,
+                    "cd0_total": float(result["cd0_total"]),
+                    "CD_vsp": float(result["CD_vsp"]),
+                    "CD_hyb": float(result["CD_hyb"]),
+                    "CLtot": float(result["CLtot"]),
+                    "L/D_2": float(result["L/D_2"]),
+                    "CDi": float(result["CDi"]),
+                })
+                self.evaluation_records.append(base_row)
             except Exception as e:
                 print(f"    Design {i} result parsing failed: {type(e).__name__}: {str(e)[:150]}")
                 F.append([1e6, -1.0, -100.0])
                 G.append([1e6, 1e6, 1e6])
+                base_row.update({
+                    "Area": 1e6,
+                    "L2D": -1.0,
+                    "Config": -100.0,
+                    "CMy": np.nan,
+                    "cd0_total": np.nan,
+                    "CD_vsp": np.nan,
+                    "CD_hyb": np.nan,
+                    "CLtot": np.nan,
+                    "L/D_2": np.nan,
+                    "CDi": np.nan,
+                })
+                self.evaluation_records.append(base_row)
 
         out["F"] = np.array(F)
         out["G"] = np.array(G)
@@ -408,18 +466,7 @@ HV_df = pd.DataFrame(gen_hv)
 HV_df.to_csv("HV_normalised.csv",index=False)
 
 # Saving ALL generation history with named columns
-all_generations_df = []
-for i, gen in enumerate(res.history):
-    X = gen.pop.get("X")
-    F = gen.pop.get("F")
-    df = pd.DataFrame(list(X), columns=var_names)
-    df['Area'] = F[:,0]
-    df['L2D'] = -F[:,1]
-    df['Config'] = -F[:,2]
-    df['Generation'] = i+1
-    all_generations_df.append(df)
-
-all_gens_df = pd.concat(all_generations_df, ignore_index=True)
+all_gens_df = pd.DataFrame(problem.evaluation_records)
 all_gens_df.to_csv("all_generations.csv", index=False)
 # Also keep last10_gens.csv for backward compatibility
 last10_df = all_gens_df[all_gens_df["Generation"] <= 2]

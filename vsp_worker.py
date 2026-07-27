@@ -55,14 +55,22 @@ def main():
         os.chdir(work_dir)
 
         aero = Aero(path=local_vsp_file, Engine_Power=engine_power, xcg=cg)
-        cost, area, neg_L2D, CMy = aero.compute_objective()
-
+        cost, area, neg_L2D, CMy, CLtot, CDi, CD0, cd0_total = aero.compute_objective()
+        CD_vsp = CDi + CD0
+        CD_hyb = CDi + cd0_total
+        l_d_2 = CLtot / CD_hyb if CD_hyb else 0.0
         result = {
             "success": True,
             "cost": cost,
             "area": list(area),       # area is a list of component areas
             "L2D": -neg_L2D,           # compute_objective returns -L2D; undo negation
             "CMy": CMy,
+            "cd0_total": cd0_total,    # total parasitic drag coefficient
+            "CD_vsp": CD_vsp,           # VSPAero total drag coefficient
+            "CD_hyb": CD_hyb,           # hybrid drag coefficient
+            "CLtot": CLtot,               # total lift coefficient
+            "L/D_2": l_d_2,                # L/D based on hybrid drag (CDi + cd0_total)
+            "CDi": CDi,                     # induced drag coefficient
         }
 
     except Exception as e:

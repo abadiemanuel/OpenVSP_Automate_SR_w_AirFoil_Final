@@ -13,8 +13,14 @@ from Trial_2 import Fuselage, Wing, Propulsion
 from SubParts_config import Wing_Type_Config, Wing_Position_Config, Tail_Config
 from Sizing import *
 
-# Default airfoil path used for all surfaces
-DEFAULT_AIRFOIL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "airfoils", "NACA0010.dat")
+# Airfoil folder path
+AIRFOIL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "airfoils")
+
+def airfoil_path(name):
+    """Convert airfoil filename (e.g. '1.sg6043rev.dat') to full file path."""
+    if not name:
+        return ""
+    return os.path.join(AIRFOIL_DIR, name)
 
 
 class Master_Designer:
@@ -77,7 +83,7 @@ class Master_Designer:
         wing_instance = Wing(Xloc=x_loc, Zloc=z_loc, Span=data['Wing_Span'], Sweep=data["Sweep"],
                                  Tip=Tip_Chord, Root=Root_Chord, YRot=-3, Chord=MAC)
         wing_instance.Plan()
-        wing_af = DEFAULT_AIRFOIL_PATH
+        wing_af = airfoil_path(data.get('Wing_Airfoil', ''))
         wing_instance.Sect(root_af=wing_af, tip_af=wing_af)
         wing_instance.XForm()
         vsp.Update()  # Update after wing creation
@@ -100,8 +106,8 @@ class Master_Designer:
         bh = np.sqrt(6*Sht) #Horizontal Tail Span
         Crh = 1.2*Sht/bh #Horizontal Root Chord
         Cth = 0.5 * Crh ##Horizontal tip Chord
-        htail_af = DEFAULT_AIRFOIL_PATH
-        vtail_af = DEFAULT_AIRFOIL_PATH
+        htail_af = airfoil_path(data.get('HTail_Airfoil', ''))
+        vtail_af = airfoil_path(data.get('VTail_Airfoil', ''))
         if data['Tail_Type'] == "Conventional":
             tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=0.47 * data['Fuselage_Height_3'],
                                         H_Span=bh, H_Root=Crh,
@@ -213,6 +219,7 @@ class Master_Designer:
         print(Root_Chord)
         return filename #path for Aero Analysis
 
-"""top_n_df = pd.read_csv('design_compare.csv')
+
+top_n_df = pd.read_csv('design_compare.csv') #uncommented by Manuel 5/7 since running mastercontoller2 did not continue the workflow
 Designer = Master_Designer(top_n_df)
-Designer.process_population()"""
+Designer.process_population()

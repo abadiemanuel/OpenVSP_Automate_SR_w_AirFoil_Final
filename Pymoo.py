@@ -285,6 +285,7 @@ class Genetic(Problem):
                     "CLtot": np.nan,
                     "L/D_2": np.nan,
                     "CDi": np.nan,
+                    "CDi_visc": np.nan,
                 })
                 self.evaluation_records.append(base_row)
                 continue
@@ -306,6 +307,7 @@ class Genetic(Problem):
                     "CLtot": np.nan,
                     "L/D_2": np.nan,
                     "CDi": np.nan,
+                    "CDi_visc": np.nan,
                 })
                 self.evaluation_records.append(base_row)
                 continue
@@ -340,6 +342,7 @@ class Genetic(Problem):
                     "CLtot": float(result["CLtot"]),
                     "L/D_2": float(result["L/D_2"]),
                     "CDi": float(result["CDi"]),
+                    "CDi_visc": float(result["CDi_visc"]),
                 })
                 self.evaluation_records.append(base_row)
             except Exception as e:
@@ -357,6 +360,7 @@ class Genetic(Problem):
                     "CLtot": np.nan,
                     "L/D_2": np.nan,
                     "CDi": np.nan,
+                    "CDi_visc": np.nan,
                 })
                 self.evaluation_records.append(base_row)
 

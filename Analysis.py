@@ -102,9 +102,9 @@ class Aero:
 
         vsp.SetDoubleAnalysisInput(analysis_name, "MachStart", [cruise_mach])
         vsp.SetIntAnalysisInput(analysis_name, "MachNpts", [1])
-        vsp.SetDoubleAnalysisInput(analysis_name, "AlphaStart", [-1.0])
+        vsp.SetDoubleAnalysisInput(analysis_name, "AlphaStart", [-6.0])
         vsp.SetDoubleAnalysisInput(analysis_name, "AlphaEnd", [10.0])
-        vsp.SetIntAnalysisInput(analysis_name, "AlphaNpts", [5])  # Number of alpha points
+        vsp.SetIntAnalysisInput(analysis_name, "AlphaNpts", [7])  # Number of alpha points
         vsp.SetDoubleAnalysisInput(analysis_name, "ReCref", [5.8e6])  # Reynolds number
         vsp.SetIntAnalysisInput(analysis_name, "NumWakeNodes", [32])
         vsp.SetIntAnalysisInput(analysis_name, "WakeNumIter", [5])
@@ -147,14 +147,14 @@ class Aero:
         CLtot = vsp.GetDoubleResults(history_res, "CLtot")
         CDtot = vsp.GetDoubleResults(history_res, "CDtot")
         CDi = vsp.GetDoubleResults(history_res, "CDi")
-        CD0 = vsp.GetDoubleResults(history_res, "CD0")
+        Cdo = vsp.GetDoubleResults(history_res, "CDo")
         L2D = vsp.GetDoubleResults(history_res, "L/D")
         E = vsp.GetDoubleResults(history_res, "E")
         # CMx/CMy/CMz may not be available in VLM mode without stability analysis
         CMx = vsp.GetDoubleResults(history_res, "CMx") or [0.0]
         CMy = vsp.GetDoubleResults(history_res, "CMy") or [0.0]
         CMz = vsp.GetDoubleResults(history_res, "CMz") or [0.0]
-        
+
         # Check if we got valid results
         if not CLtot or not CDtot or not L2D or not E:
             print("Warning: Empty results from VSPAero")
@@ -169,7 +169,12 @@ class Aero:
             print(f"CLtot: {CLtot}, CDtot: {CDtot}, L2D: {L2D}")
             vsp.ClearVSPModel()
             raise RuntimeError("VSPAero returned all-zero L/D (solver failure)")
-        
+
+        # Calculate Cdi_Visc for Removing NACA0012-based parasite drag, see Brandon Litherlands drag buildup for info
+        Cdo_min = min(Cdo)
+        CDi_visc = [cdo - Cdo_min for cdo in Cdo]
+        assert all(x >= -1e-9 for x in CDi_visc), "residual went negative: check sweep/monotonicity"
+
         # Calculate CMy change (for stability derivative)
         CMy_delta = 0.0
         if len(CMy) >= 2:
@@ -185,7 +190,7 @@ class Aero:
         
         print(f"VSPAero analysis successful: L/D = {final_L2D:.2f}")
         vsp.ClearVSPModel()
-        return final_L2D, CDtot[-1], CMy_delta, CLtot[-1], E[-1], CD0[-1], CDi[-1]
+        return final_L2D, CDtot[-1], CMy_delta, CLtot[-1], E[-1], Cdo[-1], CDi[-1], CDi_visc[-1]
 
     def ParasiticDrag(self):
         """
@@ -253,7 +258,7 @@ class Aero:
         print("\n=== Starting objective computation ===")
         area = self.ComputeArea()
         self.ComputeGeom()
-        L2D, CDtot, CMy,CLtot,E, CD0, CDi = self.VSPAero()
+        L2D, CDtot, CMy,CLtot,E, CDo, CDi, CDi_visc= self.VSPAero()
         cd0_total = self.ParasiticDrag()
         if L2D >50: # Based on highest achieved by ETA gliders
           L2D = 50
@@ -271,5 +276,5 @@ class Aero:
         #return total, L2D,CMy, Cl, Cdtotal, cost,area
         print(f"Objectives: cost={cost:.2f}, area={sum(area):.2f}, L/D={L2D:.2f}, CMy={CMy:.4f}")
         print("=== Objective computation complete ===\n")
-        return cost, area, -L2D, CMy, CLtot, CDi, CD0, cd0_total
+        return cost, area, -L2D, CMy, CLtot, CDi, CDo, cd0_total, CDi_visc
 

@@ -55,9 +55,9 @@ def main():
         os.chdir(work_dir)
 
         aero = Aero(path=local_vsp_file, Engine_Power=engine_power, xcg=cg)
-        cost, area, neg_L2D, CMy, CLtot, CDi, CD0, cd0_total = aero.compute_objective()
-        CD_vsp = CDi + CD0
-        CD_hyb = CDi + cd0_total
+        cost, area, neg_L2D, CMy, CLtot, CDi, CDo, cd0_total, CDi_visc= aero.compute_objective()
+        CD_vsp = CDi + CDo
+        CD_hyb = CDi + cd0_total + CDi_visc
         l_d_2 = CLtot / CD_hyb if CD_hyb else 0.0
         result = {
             "success": True,
@@ -71,6 +71,7 @@ def main():
             "CLtot": CLtot,               # total lift coefficient
             "L/D_2": l_d_2,                # L/D based on hybrid drag (CDi + cd0_total)
             "CDi": CDi,                     # induced drag coefficient
+            "CDi_visc": CDi_visc,           # viscous induced drag coefficient
         }
 
     except Exception as e:

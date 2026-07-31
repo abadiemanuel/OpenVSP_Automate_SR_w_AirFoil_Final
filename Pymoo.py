@@ -277,6 +277,7 @@ class Genetic(Problem):
                 base_row.update({
                     "Area": 1e6,
                     "L2D": -1.0,
+                    "L/D_2": -1.0,
                     "Config": -100.0,
                     "CMy": np.nan,
                     "cd0_total": np.nan,
@@ -299,6 +300,7 @@ class Genetic(Problem):
                 base_row.update({
                     "Area": 1e6,
                     "L2D": -1.0,
+                    "L/D_2": -1.0,
                     "Config": -100.0,
                     "CMy": np.nan,
                     "cd0_total": np.nan,
@@ -316,7 +318,7 @@ class Genetic(Problem):
                 design_row = vsp_jobs[i][2]
                 f_1 = float(result["cost"])
                 f_2 = float(sum(result["area"]))
-                f_3 = float(-result["L2D"])  # Negate for minimization
+                f_3 = float(-result["L/D_2"])  # Negate for minimization, using parasitic-drag coorected L/D_2
                 constraint_1 = float(result["CMy"])
 
                 f_4 = -1*(
@@ -329,11 +331,12 @@ class Genetic(Problem):
                 f_4 = float(f_4)
                 F.append([f_2,f_3,f_4])
                 G.append([constraint_1, constraint_2, constraint_3])
-                print(f"    Design {i}: cost={f_1:.2f}, area={f_2:.2f}, L/D={-f_3:.2f}, config_score={f_4:.2f}")
+                print(f"    Design {i}: cost={f_1:.2f}, area={f_2:.2f}, L/D_2={-f_3:.2f}, config_score={f_4:.2f}")
 
                 base_row.update({
                     "Area": f_2,
-                    "L2D": -f_3,
+                    "L2D": float(result["L2D"]),
+                    "L/D_2": -f_3,
                     "Config": f_4,
                     "CMy": constraint_1,
                     "cd0_total": float(result["cd0_total"]),
@@ -352,6 +355,7 @@ class Genetic(Problem):
                 base_row.update({
                     "Area": 1e6,
                     "L2D": -1.0,
+                    "L/D_2": -1.0,
                     "Config": -100.0,
                     "CMy": np.nan,
                     "cd0_total": np.nan,
@@ -483,6 +487,7 @@ if res.X is not None and res.F is not None:
     results_df = pd.DataFrame(list(res.X), columns=var_names)
     results_df['Area'] = res.F[:,0]
     results_df['L2D'] = -res.F[:,1]
+    results_df['L/D_2'] = 0  #-res.F[:,1]
     results_df['Config'] = -res.F[:,2]
     pd.set_option('display.max_rows', 20)
 
@@ -495,7 +500,7 @@ else:
     print("This usually means no feasible solutions were found.")
     results_df = pd.DataFrame()  # Empty dataframe
 
-objective_names = ["Area", "L2D", "Config"]
+objective_names = ["Area", "L/D_2", "Config"]
 if problem.last_objectives is not None and problem.last_temp_df is not None:
     objective_df = pd.DataFrame(problem.last_objectives, columns = objective_names)
     temporary_df = pd.concat([problem.last_temp_df,objective_df], axis = 1)

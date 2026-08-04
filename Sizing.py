@@ -27,15 +27,18 @@ def get_input(prompt, default):
 # Use default values (no interactive input for automated runs)
 # To enable interactive mode, call get_interactive_inputs() function
 inputs = {
-    'payload': 250, #kg
-    'payload_vol': 2.5, #m3
+    'payload': 386, #kg
+    'payload_vol': 4., #m3
+    'payload_length': 2.9, #m
+    'payload_width':1.13, #m
+    'payload_height': 1.22, #m
     'cruise_speed': 82.0, #m/s 
-    'Range': 2500,   #km
-    'absolute_ceiling': 9144, #m
+    'Range': 740.8,   #km
+    'absolute_ceiling': 15240, #m
     'service_ceiling': 7620.0, #m
     'cl_max': 1.6, #max lift coefficient
     'cruise_ceiling' :5000.0, #m
-    'Stall_Speed': 28.3,  # m/s According to EASA (55kts)
+    'Stall_Speed': 40.0,  # m/s According to EASA (55kts)
 }
 
 def get_interactive_inputs():
@@ -44,6 +47,9 @@ def get_interactive_inputs():
     inputs = {
         'payload': get_input(("Enter payload (kg): "), 386),
         'payload_vol': get_input(("Enter payload volume (m^3): "), 4),
+        'payload_length': get_input(("Enter payload length (m): "), 3.0),
+        'payload_width': get_input(("Enter payload width (m): "), 1.0),
+        'payload_height': get_input(("Enter payload height (m): "), 1.6),
         'cruise_speed': get_input(("Enter cruise speed (m/s): "),82),
         'Range': get_input(("Enter range (km): "), 740.8),
         'absolute_ceiling': get_input(("Enter Absolute ceiling (m): ") , 15240),

@@ -12,6 +12,7 @@ import os
 from Trial_2 import Fuselage, Wing, Propulsion
 from SubParts_config import Wing_Type_Config, Wing_Position_Config, Tail_Config
 from Sizing import *
+from fuselage_payload_sizing import compute_section_locations, size_payload_fuselage, K_PACK
 
 # Airfoil folder path
 AIRFOIL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "airfoils")
@@ -34,23 +35,61 @@ class Master_Designer:
 
     def create_aircraft(self, index, final = False):
         data = self.population_df.iloc[index]
+       
+        # Compute payload-derived base dimensions for multiplier calculation
+        w_bay_base = K_PACK * inputs.get('payload_width', 1.0)
+        h_bay_base = K_PACK * inputs.get('payload_height', 1.0)
+        
+        # Calculate multipliers for sections 0 and 4 (relative to payload width/height)
+        mult_0 = 0.5   
+        mult_3 = 0.75
+        mult_4 = 0.5
 
-        #Fuselage Geometry design
-        fuse =  Fuselage(length=data['Fuselage_Length'], Nose_cap=data['Fuselage_NoseCap'], Tail_cap=data['Fuselage_TailCap'],
-                    fuselage_Width_0=data['Fuselage_Width_0'],fuselage_Height_0=data['Fuselage_Height_0'],
-                    fuselage_Width_1=data['Fuselage_Width_1'],fuselage_Height_1=data['Fuselage_Height_1'],
-                    fuselage_Width_2=data['Fuselage_Width_2'],fuselage_Height_2=data['Fuselage_Height_2'],
-                    fuselage_Width_3=data['Fuselage_Width_3'],fuselage_Height_3=data['Fuselage_Height_3'],
-                    fuselage_Width_4=data['Fuselage_Width_4'],fuselage_Height_4=data['Fuselage_Height_4'],
+        payload_sizing = size_payload_fuselage(
+            inputs.get('payload_length', 1.0),
+            inputs.get('payload_width', 1.0),
+            inputs.get('payload_height', 1.0),
+            float(data['Wing_Span']),
+            mult_0=mult_0,
+            mult_3=mult_3,
+            mult_4=mult_4,
+        )
+        fuselage_length = payload_sizing['L_f']
+        fuselage_height = payload_sizing['H_max']  # For wing position config
+        payload_cg_x = payload_sizing['payload_cg_x']
+        payload_length = inputs.get('payload_length', 1.0)
+        xsec_locations = compute_section_locations(payload_length, payload_cg_x, fuselage_length)
+
+        # Use section-specific dimensions from sizing function
+        fuselage_width_0 = payload_sizing['w_0']
+        fuselage_height_0 = payload_sizing['h_0']
+        fuselage_width_1 = payload_sizing['w_1']
+        fuselage_height_1 = payload_sizing['h_1']
+        fuselage_width_2 = payload_sizing['w_2']
+        fuselage_height_2 = payload_sizing['h_2']
+        fuselage_width_3 = payload_sizing['w_3']
+        fuselage_height_3 = payload_sizing['h_3']
+        fuselage_width_4 = payload_sizing['w_4']
+        fuselage_height_4 = payload_sizing['h_4']
+
+        fuse =  Fuselage(length=fuselage_length, Nose_cap=data['Fuselage_NoseCap'], Tail_cap=data['Fuselage_TailCap'],
+                    payload_cg_x=payload_cg_x,
+                    xsec_locations=xsec_locations,
+                    fuselage_Width_0=fuselage_width_0,fuselage_Height_0=fuselage_height_0,
+                    fuselage_Width_1=fuselage_width_1,fuselage_Height_1=fuselage_height_1,
+                    fuselage_Width_2=fuselage_width_2,fuselage_Height_2=fuselage_height_2,
+                    fuselage_Width_3=fuselage_width_3,fuselage_Height_3=fuselage_height_3,
+                    fuselage_Width_4=fuselage_width_4,fuselage_Height_4=fuselage_height_4,
+                    z_3=payload_sizing['z_3'],
                     topangle_0=data['toptan_0'], topangle_1=data['toptan_1'], topangle_2 = data['toptan_2'],
                     topangle_3=data['toptan_3'],topangle_4 = data['toptan_4'], botangle_0 = data['bottan_0'],
                     botangle_1=data['bottan_1'], botangle_2 = data['bottan_2'], botangle_3 = data['bottan_3'],
-                    botangle_4=data['bottan_4'], topstr_0=  data['topstr_0'], topstr_1=  data['topstr_1'], topstr_2= data['topstr_2'],
-                    topstr_3=data['topstr_3'], topstr_4=  data['topstr_4'], botstr_0= data['botstr_0'],
-                    botstr_1= data['botstr_1'], botstr_2= data['botstr_2'], botstr_3= data['botstr_3'], botstr_4= data['botstr_4'],
-
+                    botangle_4=data['bottan_4'], topstr_0=data['topstr_0'], topstr_1=data['topstr_1'], topstr_2=data['topstr_2'],
+                    topstr_3=data['topstr_3'], topstr_4=data['topstr_4'], botstr_0=data['botstr_0'],
+                    botstr_1=data['botstr_1'], botstr_2=data['botstr_2'], botstr_3=data['botstr_3'], botstr_4=data['botstr_4'],
                     )
         fuse.Design()
+        fuse.Modify_Xsec()
         fuse.Modify_Xsec()
         vsp.Update()  # Update after fuselage creation
 
@@ -62,8 +101,8 @@ class Master_Designer:
 
         Root_Chord = (1.5 * MAC) / ((1 + TR + TR ** 2) / (1 + TR))
         Tip_Chord = TR * Root_Chord
-        wing_postion_config = Wing_Position_Config(fuselage_length=data['Fuselage_Length'],
-                                                   fuselage_height=data['Fuselage_Height_2'])
+        wing_postion_config = Wing_Position_Config(fuselage_length=fuselage_length,
+                                                   fuselage_height=fuselage_height)
         wing_loc_data = {}  # stores the wing location for reference
         if data['Wing_Position'] == "Low":
             x_loc, z_loc = wing_postion_config.Low()
@@ -90,10 +129,10 @@ class Master_Designer:
 
         # Tail Design
         tail_span = 0.25 * data['Wing_Span']  # Tail is related to wingspan
-        tail_xloc = 0.85 * data['Fuselage_Length']
+        tail_xloc = 0.85 * fuselage_length
 
         #vertical
-        lv = 0.5*data['Fuselage_Length'] # diference between tail xloc and cg
+        lv = 0.5*fuselage_length # diference between tail xloc and cg
         Svt = (data['Vol_Vert']*data['Wing_Span']**3)/(AR*lv) #Vertical Tail Area
         #Svt = 0.2*
         bv = np.sqrt(2*Svt) #Vertical Tail SPan
@@ -101,7 +140,7 @@ class Master_Designer:
         Ctv = 0.6*Crv #vertical tip Chord
 
         #horizontal
-        lh = 0.4*data['Fuselage_Length']
+        lh = 0.4*fuselage_length
         Sht = (data['Vol_Hor'] * (data['Wing_Span']**2)*MAC)/(AR*lh) #Horizontal Tail Area
         bh = np.sqrt(6*Sht) #Horizontal Tail Span
         Crh = 1.2*Sht/bh #Horizontal Root Chord
@@ -109,11 +148,11 @@ class Master_Designer:
         htail_af = airfoil_path(data.get('HTail_Airfoil', ''))
         vtail_af = airfoil_path(data.get('VTail_Airfoil', ''))
         if data['Tail_Type'] == "Conventional":
-            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=0.47 * data['Fuselage_Height_3'],
+            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=0.47 * fuselage_height_3,
                                         H_Span=bh, H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=0,
                                         H_sweep=11.8,
-                                        V_Xloc=tail_xloc, V_Zloc=0.47 * data['Fuselage_Height_3'],
+                                        V_Xloc=tail_xloc, V_Zloc=0.47 * fuselage_height_3,
                                         V_Span=bv, V_Root=Crv,
                                         V_Tip=Ctv, V_diehedral=90, Y_Rot=-4,
                                         H_Airfoil=htail_af, V_Airfoil=vtail_af)
@@ -122,37 +161,37 @@ class Master_Designer:
 
 
         elif data['Tail_Type'] == "T-Tail":
-            h_z_loc = 0.496 * bv + 0.47 * data['Fuselage_Height_3']
+            h_z_loc = 0.496 * bv + 0.47 * fuselage_height_3
             tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=h_z_loc, H_Span=bh,
                                         H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=0,
                                         H_sweep=11.8,
                                         V_Xloc=tail_xloc, V_Span=bv,
-                                        V_Root=Crv,V_Zloc=0.47 * data['Fuselage_Height_3'],
+                                        V_Root=Crv,V_Zloc=0.47 * fuselage_height_3,
                                         V_Tip=Ctv, V_diehedral=90, Y_Rot=-4,
                                         H_Airfoil=htail_af, V_Airfoil=vtail_af)
             tail_instance.Conventional()
 
 
         elif data['Tail_Type'] == "Cruciform":
-            h_z_loc = 0.3 * bv + 0.47 * data['Fuselage_Height_3']
+            h_z_loc = 0.3 * bv + 0.47 * fuselage_height_3
 
             tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=h_z_loc, H_Span=bh,
                                         H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=0,
                                         H_sweep=11.8,
                                         V_Xloc=tail_xloc, V_Span=bv,
-                                        V_Root=Crv,V_Zloc=0.47 * data['Fuselage_Height_3'],
+                                        V_Root=Crv,V_Zloc=0.47 * fuselage_height_3,
                                         V_Tip=Ctv, V_diehedral=90, Y_Rot=-4,
                                         H_Airfoil=htail_af, V_Airfoil=vtail_af)
             tail_instance.Conventional()
 
         elif data['Tail_Type'] == "Y-Tail":
-            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=0.47 * data['Fuselage_Height_3'],
+            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=0.47 * fuselage_height_3,
                                         H_Span=bh, H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=30,
                                         H_sweep=21.8,
-                                        V_Xloc=tail_xloc, V_Zloc=-0.4 * data['Fuselage_Height_3'],
+                                        V_Xloc=tail_xloc, V_Zloc=-0.4 * fuselage_height_3,
                                         V_Span=bv, V_Root=Crv,
                                         V_Tip=Ctv, V_diehedral=-90,
                                         V_sweep=21.8, Y_Rot=-4,
@@ -160,11 +199,11 @@ class Master_Designer:
             tail_instance.Conventional()
 
         elif data['Tail_Type'] == "Inverted_Y-Tail":
-            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=-0.4 * data['Fuselage_Height_3'],
+            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=-0.4 * fuselage_height_3,
                                         H_Span=bh, H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=-30,
                                         H_sweep=21.8,
-                                        V_Xloc=tail_xloc, V_Zloc=0.47 * data['Fuselage_Height_3'],
+                                        V_Xloc=tail_xloc, V_Zloc=0.47 * fuselage_height_3,
                                         V_Span=bv, V_Root=Crv,
                                         V_Tip=Ctv, V_diehedral=90,
                                         V_sweep=21.8, Y_Rot=-4,
@@ -173,13 +212,13 @@ class Master_Designer:
 
         elif data['Tail_Type'] == "Dual-Tail":
             Dual_H_Sweep = math.degrees(math.atan((3) / (0.5 * tail_span)))
-            tail_instance = Tail_Config(H_Span=bh, H_Xloc=0.85 * data['Fuselage_Length'],
-                                        H_Zloc=0.47 * data['Fuselage_Height_3'],
+            tail_instance = Tail_Config(H_Span=bh, H_Xloc=0.85 * fuselage_length,
+                                        H_Zloc=0.47 * fuselage_height,
                                         H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=0,
                                         H_sweep=15,
-                                        V_Xloc=0.89 * data['Fuselage_Length'], V_Yloc=0.53 * bh,
-                                        V_Zloc=0.4 * data['Fuselage_Height_3'], V_Span=bv,
+                                        V_Xloc=0.89 * fuselage_length, V_Yloc=0.53 * bh,
+                                        V_Zloc=0.4 * fuselage_height_3, V_Span=bv,
                                         V_Root=Crv,
                                         V_Tip=Ctv, V_diehedral=90,
                                         V_sweep=21.8, Y_Rot=-4,
@@ -188,7 +227,7 @@ class Master_Designer:
 
 
         elif data['Tail_Type'] == "V-Tail":
-            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=0.47 * data['Fuselage_Height_3'],
+            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=0.47 * fuselage_height_3,
                                         H_Span=bh, H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=30,
                                         H_sweep=21.8, Y_Rot=-4,
@@ -196,7 +235,7 @@ class Master_Designer:
             tail_instance.V_Tail()
 
         elif data['Tail_Type'] == "Inverted_V-Tail":
-            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=-0.4 * data['Fuselage_Height_3'],
+            tail_instance = Tail_Config(H_Xloc=tail_xloc, H_Zloc=-0.4 * fuselage_height_3,
                                         H_Span=bh, H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=-30,
                                         H_sweep=21.8, Y_Rot=-4,

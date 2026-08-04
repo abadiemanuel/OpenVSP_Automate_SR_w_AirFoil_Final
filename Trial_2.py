@@ -18,7 +18,7 @@ class Fuselage:
     fid = None  # Class attribute
 
     def __init__(self, length=20, Xloc=0.0, Yloc=0.0, Zloc=0.0, XRot=0.0, YRot=0.0, ZRot=0.0, Xsec=None,
-                 fuselage_Width_0=2.5, fuselage_Height_0=3.0
+                 payload_cg_x=None, xsec_locations=None, z_3=0.0, fuselage_Width_0=2.5, fuselage_Height_0=3.0
                  , fuselage_Width_1=2.5, fuselage_Height_1=3.0, fuselage_Width_2=2.5, fuselage_Height_2=3.0,
                  fuselage_Width_3=2.5, fuselage_Height_3=3.0,
                  fuselage_Width_4=2.5, fuselage_Height_4=3.0, Nose_cap=1, Tail_cap=2, topangle_0=90, topangle_1=90,
@@ -37,6 +37,10 @@ class Fuselage:
         self.YRot = YRot
         self.ZRot = ZRot
         self.Xsec = Xsec
+        self.z_3 = z_3
+        self.payload_cg_x = payload_cg_x if payload_cg_x is not None else 0.33 * length
+        self.payload_cg_station = self.payload_cg_x / length if length else 0.0
+        self.xsec_locations = xsec_locations or {}
         self.fuselage_Width_0 = fuselage_Width_0
         self.fuselage_Height_0 = fuselage_Height_0
         self.fuselage_Width_1 = fuselage_Width_1
@@ -154,7 +158,6 @@ class Fuselage:
             parmid7 = vsp.GetXSecParm(x_sec, "UpStr")
             parmid8 = vsp.GetXSecParm(x_sec, "LowStr")
 
-
             vsp.SetParmVal(parmid1, fuselage_Width)  # We set the dimensions of the fuselage
             vsp.SetParmVal(parmid2, fuselage_Height)
             vsp.SetParmVal(parmid3, topangle)
@@ -163,8 +166,27 @@ class Fuselage:
             vsp.SetParmVal(parmid6, botstr)
 
 
-            # Collection of variables for modification/Skinning
+            section_station = self.xsec_locations.get(i)
+            if section_station is not None:
+                try:
+                    station_parm = vsp.GetXSecParm(x_sec, "XLocPercent")
+                    station_fraction = section_station / self.length
+                    vsp.SetParmVal(station_parm, station_fraction)
+                except Exception as e:
+                    pass
 
+            # prescibe flat bottom side of fuselage for section 3
+            xsec_id = vsp.GetXSec(xsec_surf, 3)
+            ZLoc_id = vsp.GetXSecParm(xsec_id, "ZLocPercent")
+            vsp.SetParmVal(ZLoc_id, self.z_3)
+            
+
+            # Prescribe angles of -15 to top and bottom sides of fuselagesection 4  to prevent inflation of fluselage due to defaul -45
+            xsec_id = vsp.GetXSec(xsec_surf, 4)
+            top_l_angle_id = vsp.GetXSecParm(xsec_id, "TopLAngle")
+            right_l_angle_id = vsp.GetXSecParm(xsec_id, "RightLAngle")
+            vsp.SetParmVal(top_l_angle_id, -15.0)
+            vsp.SetParmVal(right_l_angle_id, -15.0)
         vsp.Update()
 
 

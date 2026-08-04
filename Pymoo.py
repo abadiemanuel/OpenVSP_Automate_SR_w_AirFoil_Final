@@ -24,6 +24,7 @@ from DT import decoded_pred
 from Master_Controller_2 import *
 from Sizing import *
 from Analysis import *
+from  fuselage_payload_sizing import *
 import time
 import subprocess
 import json
@@ -61,11 +62,12 @@ Fuselage_Width_3 = (0.6667*payload_radius, 1.2*payload_radius)#1
 Fuselage_Height_3 = (0.6667*payload_radius, 1.2*payload_radius)#1
 Fuselage_Width_4 = (0.333*payload_radius, 0.8*payload_radius)
 Fuselage_Height_4 = (0.333*payload_radius, 0.8*payload_radius)
+
 mixed_vars = {
     "Wing_Span": Real(bounds = (Span)), "Power": Real(bounds = (power)),"Taper": Real(bounds = (0.3,1)),"Sweep": Real(bounds = (0, 20)),"Vol_Hor": Real(bounds = (0.7,1.1)),"Vol_Vert": Real(bounds = (0.02, 0.1)),
-    "Fuselage_Length": Real(bounds=(Fuse_length)),"Fuselage_Width_0": Real(bounds=(Fuselage_Width_0)),"Fuselage_Height_0": Real(bounds=(Fuselage_Height_0)),"Fuselage_Width_1": Real(bounds=(Fuselage_Width_1)),"Fuselage_Height_1": Real(bounds=(Fuselage_Height_1)),
-    "Fuselage_Width_2": Real(bounds=(Fuselage_Width_2)),"Fuselage_Height_2": Real(bounds=(Fuselage_Height_2)),"Fuselage_Height_3": Real(bounds=(Fuselage_Height_3)),"Fuselage_Width_3": Real(bounds=(Fuselage_Width_3)),"Fuselage_Height_4": Real(bounds=(Fuselage_Height_4)),
-    "Fuselage_Width_4": Real(bounds=(Fuselage_Width_4)),"toptan_0": Real(bounds=(40,120)),"toptan_1": Real(bounds=(40,120)),"toptan_2": Real(bounds=(40,120)),"toptan_3": Real(bounds=(40,120)),"toptan_4": Real(bounds=(40,120)),
+    "Fuselage_Width_0": Real(bounds=(Fuselage_Width_0)),"Fuselage_Height_0": Real(bounds=(Fuselage_Height_0)),
+    "Fuselage_Width_4": Real(bounds=(Fuselage_Width_4)),"Fuselage_Height_4": Real(bounds=(Fuselage_Height_4)),
+    "toptan_0": Real(bounds=(40,120)),"toptan_1": Real(bounds=(40,120)),"toptan_2": Real(bounds=(40,120)),"toptan_3": Real(bounds=(40,120)),"toptan_4": Real(bounds=(40,120)),
     "bottan_0": Real(bounds=(40,120)),"bottan_1": Real(bounds=(40,120)),"bottan_2": Real(bounds=(40,120)),"bottan_3": Real(bounds=(40,120)),"bottan_4": Real(bounds=(40,120)),"topstr_0": Real(bounds=(0.5, 1.83)),"topstr_1": Real(bounds=(0.5, 1.83)),
     "topstr_2": Real(bounds=(0.5, 1.83)),"topstr_3": Real(bounds=(0.5, 1.83)),"topstr_4": Real(bounds=(0.5, 1.83)),"botstr_0": Real(bounds=(0.5, 1.83)),
     "botstr_1": Real(bounds=(0.5, 1.83)),"botstr_2": Real(bounds=(0.5, 1.83)),"botstr_3": Real(bounds=(0.5, 1.83)),"botstr_4": Real(bounds=(0.5, 1.83)),
@@ -391,7 +393,7 @@ algorithm = NSGA2(
     eliminate_duplicates=False
 )
 
-n_gen = 3
+n_gen = 1
 
 res = minimize(
     problem,

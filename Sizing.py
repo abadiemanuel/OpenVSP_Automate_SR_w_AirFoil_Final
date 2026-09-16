@@ -26,16 +26,19 @@ def get_input(prompt, default):
 
 # Use default values (no interactive input for automated runs)
 # To enable interactive mode, call get_interactive_inputs() function
+# Payload dimensions (m): allow user to provide cuboid box dims instead of a single volume
 inputs = {
-    'payload': 250, #kg
-    'payload_vol': 2.5, #m3
-    'cruise_speed': 82.0, #m/s 
-    'Range': 2500,   #km
-    'absolute_ceiling': 9144, #m
-    'service_ceiling': 7620.0, #m
+    'payload': 22.7, #kg
+    'payload_l': 0.889, # m
+    'payload_w': 0.2794, # m
+    'payload_h': 0.2794, # m
+    'cruise_speed': 28.3, #m/s  55kts
+    'Range': 185,   #km
+    'absolute_ceiling': 6096, #m
+    'service_ceiling': 4600, #m
     'cl_max': 1.6, #max lift coefficient
-    'cruise_ceiling' :5000.0, #m
-    'Stall_Speed': 28.3,  # m/s According to EASA (55kts)
+    'cruise_ceiling' :4600, #m
+    'Stall_Speed': 10.0 ,  # m/s According to EASA (55kts)
 }
 
 def get_interactive_inputs():
@@ -43,7 +46,9 @@ def get_interactive_inputs():
     global inputs
     inputs = {
         'payload': get_input(("Enter payload (kg): "), 386),
-        'payload_vol': get_input(("Enter payload volume (m^3): "), 4),
+        'payload_l': get_input(("Enter payload length l_p (m): "), 2.5),
+        'payload_w': get_input(("Enter payload width w_p (m): "), 1.0),
+        'payload_h': get_input(("Enter payload height h_p (m): "), 1.0),
         'cruise_speed': get_input(("Enter cruise speed (m/s): "),82),
         'Range': get_input(("Enter range (km): "), 740.8),
         'absolute_ceiling': get_input(("Enter Absolute ceiling (m): ") , 15240),
@@ -73,8 +78,54 @@ mupto = 0.55 #propeller efficiency at takeoff
 muppac = 0.8 #propeller efficiency at cruise alt
 muroc = 0.6
 
-#Payload Radius
-payload_radius = 2*np.cbrt((3*inputs['payload_vol'])/(4*np.pi)) #This is diameter rather
+# Payload volume (from cuboid dimensions) and equivalent-diameter
+# Note: payload volume/radius are no longer computed here. Use
+# `compute_fuselage_from_payload(l_p, w_p, h_p, b)` to get required diameters.
+
+
+def compute_fuselage_from_payload(l_p, w_p, h_p, b, m_p=None,
+                                  K_PACK=1.15, REG_SLOPE=0.472,
+                                  LAMBDA_MIN=5.0, LAMBDA_MAX=14.0,
+                                  C_NOSE=1.25, C_TAIL=2.25):
+    """Compute circular fuselage length and diameter driven by a cuboid payload.
+
+    Follows fuselage_circular_v1_spec.md. Inputs in metres (m).
+    Returns dict with keys: L_f, D, lambda_ach, fit_xsec, fit_len, D_req, D_floor, D_ceiling
+    """
+    # 1. Package the box
+    w_bay = K_PACK * w_p
+    h_bay = K_PACK * h_p
+
+    # 2. Length from regression
+    L_f = REG_SLOPE * b
+
+    # 3. Required diameter to enclose boxed (diagonal)
+    D_req = math.sqrt(w_bay ** 2 + h_bay ** 2)
+
+    # 4. Slenderness band on diameter for this length
+    D_floor = L_f / LAMBDA_MAX
+    D_ceiling = L_f / LAMBDA_MIN
+
+    # 5. Diameter (deterministic — drag drives to the floor, but must enclose payload)
+    D = max(D_floor, D_req)
+
+    # 6. Feasibility flags
+    fit_xsec = (D_req <= D_ceiling)
+    fit_len = (l_p <= L_f - (C_NOSE + C_TAIL) * D)
+
+    # 7. Achieved slenderness
+    lambda_ach = L_f / D if D > 0 else float('inf')
+
+    return {
+        'L_f': L_f,
+        'D': D,
+        'lambda_ach': lambda_ach,
+        'fit_xsec': fit_xsec,
+        'fit_len': fit_len,
+        'D_req': D_req,
+        'D_floor': D_floor,
+        'D_ceiling': D_ceiling,
+    }
 
 #long Range >15, medium 8-15 in km
 if  inputs['Range']<=100 :#short range

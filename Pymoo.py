@@ -50,17 +50,26 @@ print(Span)
 print(power)
 Fuse_length = 0.47*Wing_span #Fuselage length model
 cg = 0.33*np.average(Fuse_length) #from mohammed 32% to 49%
+Fuse_b_avg = float(np.average(Wing_span))
+# Compute required diameter from payload + representative wingspan (use average wingspan)
+fus_req = compute_fuselage_from_payload(l_p=float(inputs.get('payload_l', 1.0)),
+                                       w_p=float(inputs.get('payload_w', 1.0)),
+                                       h_p=float(inputs.get('payload_h', 1.0)),
+                                       b=Fuse_b_avg)
+D_req = fus_req['D_req']
+D_max = fus_req['D_ceiling']
 
-Fuselage_Width_0 = (0.333*payload_radius, 0.5*payload_radius)
-Fuselage_Height_0 = (0.333*payload_radius, 0.5*payload_radius)
-Fuselage_Width_1 =(1.2*payload_radius, 1.5*payload_radius)#
-Fuselage_Height_1 = (1.2*payload_radius, 1.5*payload_radius)
-Fuselage_Width_2 = (0.6667*payload_radius, 1.2*payload_radius)#1
-Fuselage_Height_2 = (0.6667*payload_radius, 1.2*payload_radius)#1
-Fuselage_Width_3 = (0.6667*payload_radius, 1.2*payload_radius)#1
-Fuselage_Height_3 = (0.6667*payload_radius, 1.2*payload_radius)#1
-Fuselage_Width_4 = (0.333*payload_radius, 0.8*payload_radius)
-Fuselage_Height_4 = (0.333*payload_radius, 0.8*payload_radius)
+# Set fuselage station bounds relative to required diameter
+Fuselage_Width_0 = (0.333 * D_req, 0.5 * D_req)
+Fuselage_Height_0 = (0.333 * D_req, 0.5 * D_req)
+Fuselage_Width_1 = (D_req, D_req)
+Fuselage_Height_1 = (D_req, D_req)
+Fuselage_Width_2 = (D_req, D_req)
+Fuselage_Height_2 = (D_req, D_req)
+Fuselage_Width_3 = (D_req, D_req)
+Fuselage_Height_3 = (D_req, D_req)
+Fuselage_Width_4 = (0.333 * D_req, 0.8 * D_req)
+Fuselage_Height_4 = (0.333 * D_req, 0.8 * D_req)
 mixed_vars = {
     "Wing_Span": Real(bounds = (Span)), "Power": Real(bounds = (power)),"Taper": Real(bounds = (0.3,1)),"Sweep": Real(bounds = (0, 20)),"Vol_Hor": Real(bounds = (0.7,1.1)),"Vol_Vert": Real(bounds = (0.02, 0.1)),
     "Fuselage_Length": Real(bounds=(Fuse_length)),"Fuselage_Width_0": Real(bounds=(Fuselage_Width_0)),"Fuselage_Height_0": Real(bounds=(Fuselage_Height_0)),"Fuselage_Width_1": Real(bounds=(Fuselage_Width_1)),"Fuselage_Height_1": Real(bounds=(Fuselage_Height_1)),
@@ -206,6 +215,27 @@ class Genetic(Problem):
 
         n_candidates = temp_df.shape[0]
 
+        # Fast fuselage feasibility pre-check (hard-reject infeasible candidates)
+        # Uses compute_fuselage_from_payload from Sizing.py. If payload dims are not
+        # provided as columns, fall back to a cubic bounding box derived from global inputs.
+        reject_indices = set()
+        for i in range(n_candidates):
+            row = temp_df.iloc[i]
+            b_val = float(row.get('Wing_Span', 0.0))
+            # Try to read explicit payload dims if provided
+            l_p = row.get('Payload_L', None)
+            w_p = row.get('Payload_W', None)
+            h_p = row.get('Payload_H', None)
+            if l_p is None or w_p is None or h_p is None:
+                # fallback: use explicit payload dims from Sizing.inputs if available
+                l_p = l_p or float(inputs.get('payload_l', 1.0))
+                w_p = w_p or float(inputs.get('payload_w', 1.0))
+                h_p = h_p or float(inputs.get('payload_h', 1.0))
+
+            fus = compute_fuselage_from_payload(l_p=float(l_p), w_p=float(w_p), h_p=float(h_p), b=float(b_val))
+            if not fus['fit_xsec'] or not fus['fit_len']:
+                reject_indices.add(i)
+
         # ── Phase 1: Sequential geometry creation ──────────────────────
         # OpenVSP API uses global state so geometry must be built one at a time.
         # Each candidate gets a unique temp file (temp_design_{i}.vsp3).
@@ -216,6 +246,11 @@ class Genetic(Problem):
         print(f"  Phase 1 (Gen {self.current_generation}): Building {n_candidates} geometries sequentially...")
         for i in range(n_candidates):
             self.candidate_counter += 1
+            # Skip geometry creation for candidates pre-rejected by fuselage feasibility
+            if i in reject_indices:
+                print(f"    Design {i+1}/{n_candidates} SKIPPED: fuselage packaging infeasible (hard reject)")
+                geometry_errors.add(i)
+                continue
             try:
                 # Pass full DataFrame so iloc[i] resolves correctly inside create_aircraft
                 Designer = Master_Designer(temp_df)
@@ -391,7 +426,7 @@ algorithm = NSGA2(
     eliminate_duplicates=False
 )
 
-n_gen = 3
+n_gen = 1
 
 res = minimize(
     problem,

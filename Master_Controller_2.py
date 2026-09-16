@@ -34,14 +34,27 @@ class Master_Designer:
 
     def create_aircraft(self, index, final = False):
         data = self.population_df.iloc[index]
+        # Compute fuselage sizing from payload (override station widths/heights if possible)
+        # Try to use explicit payload dims in the population row, else fall back to global inputs
+        l_p = data.get('Payload_L', None)
+        w_p = data.get('Payload_W', None)
+        h_p = data.get('Payload_H', None)
+        if l_p is None or w_p is None or h_p is None:
+            l_p = l_p or float(inputs.get('payload_l', 1.0))
+            w_p = w_p or float(inputs.get('payload_w', 1.0))
+            h_p = h_p or float(inputs.get('payload_h', 1.0))
 
-        #Fuselage Geometry design
-        fuse =  Fuselage(length=data['Fuselage_Length'], Nose_cap=data['Fuselage_NoseCap'], Tail_cap=data['Fuselage_TailCap'],
-                    fuselage_Width_0=data['Fuselage_Width_0'],fuselage_Height_0=data['Fuselage_Height_0'],
-                    fuselage_Width_1=data['Fuselage_Width_1'],fuselage_Height_1=data['Fuselage_Height_1'],
-                    fuselage_Width_2=data['Fuselage_Width_2'],fuselage_Height_2=data['Fuselage_Height_2'],
-                    fuselage_Width_3=data['Fuselage_Width_3'],fuselage_Height_3=data['Fuselage_Height_3'],
-                    fuselage_Width_4=data['Fuselage_Width_4'],fuselage_Height_4=data['Fuselage_Height_4'],
+        fus = compute_fuselage_from_payload(l_p=float(l_p), w_p=float(w_p), h_p=float(h_p), b=float(data['Wing_Span']))
+
+        # Use computed L_f for length, but keep optimizer-sampled cross-section dimensions
+        L_f = fus['L_f']
+
+        fuse =  Fuselage(length=L_f, Nose_cap=data['Fuselage_NoseCap'], Tail_cap=data['Fuselage_TailCap'],
+                fuselage_Width_0=data['Fuselage_Width_0'],fuselage_Height_0=data['Fuselage_Height_0'],
+                fuselage_Width_1=data['Fuselage_Width_1'],fuselage_Height_1=data['Fuselage_Height_1'],
+                fuselage_Width_2=data['Fuselage_Width_2'],fuselage_Height_2=data['Fuselage_Height_2'],
+                fuselage_Width_3=data['Fuselage_Width_3'],fuselage_Height_3=data['Fuselage_Height_3'],
+                fuselage_Width_4=data['Fuselage_Width_4'],fuselage_Height_4=data['Fuselage_Height_4'],
                     topangle_0=data['toptan_0'], topangle_1=data['toptan_1'], topangle_2 = data['toptan_2'],
                     topangle_3=data['toptan_3'],topangle_4 = data['toptan_4'], botangle_0 = data['bottan_0'],
                     botangle_1=data['bottan_1'], botangle_2 = data['bottan_2'], botangle_3 = data['bottan_3'],

@@ -18,10 +18,14 @@ class Aero:
         self.path = path
         self.Engine_Power = Engine_Power
         self.xcg = xcg
-        
+        # wing planform area (m^2) used to compute CL_cruise — can be set by caller
+        self.wing_area_planform = None
+
         # Verify path exists
         if not os.path.exists(self.path):
             raise FileNotFoundError(f"VSP file not found: {self.path}")
+
+    # CL_cruise calculation moved to Sizing.compute_cl_cruise
 
     def ComputeArea(self):
         print(f"Computing area for: {self.path}")
@@ -172,25 +176,31 @@ class Aero:
 
         # Calculate Cdi_Visc for Removing NACA0012-based parasite drag, see Brandon Litherlands drag buildup for info
         Cdo_min = min(Cdo)
-        CDi_visc = [cdo - Cdo_min for cdo in Cdo]
+        CDi_visc = [cdo - Cdo_min for cdo in Cdo]  #cdo is just the loop/iteration variable inside the list
         assert all(x >= -1e-9 for x in CDi_visc), "residual went negative: check sweep/monotonicity"
 
         # Calculate CMy change (for stability derivative)
         CMy_delta = 0.0
         if len(CMy) >= 2:
             CMy_delta = CMy[-1] - CMy[-2]
-        
-        final_L2D = L2D[-1]
-        if final_L2D == 0.0 and len(L2D) > 1:
-            # Last alpha point gave L/D=0 (possible zero-lift angle), use best non-zero
-            nonzero = [v for v in L2D if v != 0.0]
-            if nonzero:
-                final_L2D = max(nonzero)
-                print(f"Note: Last L/D was 0, using best non-zero L/D = {final_L2D:.2f}")
-        
-        print(f"VSPAero analysis successful: L/D = {final_L2D:.2f}")
+
+        # Construct alpha array based on inputs used for the sweep so callers can
+        # interpolate at arbitrary CL or alpha values.
+        alpha_start = -6.0
+        alpha_end = 10.0
+        alpha_npts = 7
+        try:
+            import numpy as _np
+            alphas = list(_np.linspace(alpha_start, alpha_end, alpha_npts))
+        except Exception:
+            # Fallback to indices if numpy not available
+            alphas = list(range(len(CLtot)))
+
+        print(f"VSPAero analysis successful: {len(CLtot)} alpha points")
         vsp.ClearVSPModel()
-        return final_L2D, CDtot[-1], CMy_delta, CLtot[-1], E[-1], Cdo[-1], CDi[-1], CDi_visc[-1]
+
+        # Return full sweep arrays plus alpha list and CMy_delta for downstream interpolation
+        return L2D, CDtot, CMy_delta, CLtot, E, Cdo, CDi, CDi_visc, alphas
 
     def ParasiticDrag(self):
         """
@@ -239,7 +249,7 @@ class Aero:
         cd0_total = total_cd_total[0]
         print(f"ParasiteDrag analysis successful: Total_CD_Total = {cd0_total:.6f}")
         vsp.ClearVSPModel()
-        return cd0_total
+        return cd0_total   #cd0_total includes the parasite drag of all components
 
 
         #print(f"Coeffiecient of lift:{CL[-1]}\n Total Drag:{CDtot[-1]}\n Lift_to_Drag:{L2D[-1]}\n CMy:{CMy[-1]}\n E:{E[-1]}")
@@ -258,10 +268,20 @@ class Aero:
         print("\n=== Starting objective computation ===")
         area = self.ComputeArea()
         self.ComputeGeom()
-        L2D, CDtot, CMy,CLtot,E, CDo, CDi, CDi_visc= self.VSPAero()
+        # VSPAero now returns sweep arrays and alphas for interpolation
+        L2D_arr, CDtot_arr, CMy, CLtot_arr, E_arr, CDo_arr, CDi_arr, CDi_visc_arr, alphas = self.VSPAero()
         cd0_total = self.ParasiticDrag()
-        if L2D >50: # Based on highest achieved by ETA gliders
-          L2D = 50
+        # Legacy final L2D value (use last point or best non-zero)
+        try:
+            final_L2D = L2D_arr[-1]
+            if final_L2D == 0.0 and len(L2D_arr) > 1:
+                nonzero = [v for v in L2D_arr if v != 0.0]
+                if nonzero:
+                    final_L2D = max(nonzero)
+        except Exception:
+            final_L2D = 0.0
+        if final_L2D > 50:
+            final_L2D = 50
         cost = self.cost()
         #ost_ratio = cost/208270
         #We normalize the area with wetted area of global hawk
@@ -274,7 +294,63 @@ class Aero:
        #  area_ratio = 1
         #total = -0.4*L2D_ratio -0*E_ratio + 0.2*cost_ratio + 0.3*area_ratio
         #return total, L2D,CMy, Cl, Cdtotal, cost,area
-        print(f"Objectives: cost={cost:.2f}, area={sum(area):.2f}, L/D={L2D:.2f}, CMy={CMy:.4f}")
+        print(f"Objectives: cost={cost:.2f}, area={sum(area):.2f}, L/D={final_L2D:.2f}, CMy={CMy:.4f}")
         print("=== Objective computation complete ===\n")
-        return cost, area, -L2D, CMy, CLtot, CDi, CDo, cd0_total, CDi_visc
+        # --- New: compute mission-representative L/D_3 at required CL (CL_req)
+        try:
+            from Sizing import compute_cl_cruise
+            # Prefer candidate's wing planform area if available on the Aero instance
+            if self.wing_area_planform is not None:
+                CL_req = compute_cl_cruise(self.wing_area_planform)
+            else:
+                CL_req = compute_cl_cruise()
+        except Exception:
+            CL_req = None
+
+        L_D_3 = 0.0
+        try:
+            import numpy as _np
+            CL_arr = _np.array(CLtot_arr)
+            alpha_arr = _np.array(alphas)
+            # Sort by CL to ensure monotonic interpolation
+            sort_idx = _np.argsort(CL_arr)
+            CL_sorted = CL_arr[sort_idx]
+            alpha_sorted = alpha_arr[sort_idx]
+            CDi_sorted = _np.array(CDi_arr)[sort_idx]
+            CDi_visc_sorted = _np.array(CDi_visc_arr)[sort_idx]
+            CDo_sorted = _np.array(CDo_arr)[sort_idx]
+
+            if CL_req is None:
+                L_D_3 = 0.0
+            else:
+                CL_max = CL_sorted.max()
+                CL_min = CL_sorted.min()
+                if CL_req > CL_max:
+                    # Candidate never reaches required CL -> infeasible
+                    L_D_3 = 0.0
+                else:
+                    # Interpolate AoA where CL == CL_req
+                    AoA_at_CL = float(_np.interp(CL_req, CL_sorted, alpha_sorted))
+                    # Interpolate induced/viscous/parasite contributions at that AoA
+                    CDi_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDi_sorted))
+                    CDi_visc_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDi_visc_sorted))
+                    # Parasite Cdo at that AoA (from VSPAero CDo sweep)
+                    CDo_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDo_sorted))
+                    # Hybrid drag uses CDi + parasitic (cd0_total) + viscous-induced
+                    CD_hyb_at = CDi_at + float(cd0_total) + CDi_visc_at
+                    if CD_hyb_at > 0:
+                        L_D_3 = float(CL_req / CD_hyb_at)
+                    else:
+                        L_D_3 = 0.0
+        except Exception as e:
+            print(f"Warning: failed to compute L/D_3: {e}")
+            L_D_3 = 0.0
+
+        # For backwards compatibility, return scalar CLtot as last-point value
+        try:
+            CLtot_scalar = float(CLtot_arr[-1])
+        except Exception:
+            CLtot_scalar = float(CL_req) if CL_req is not None else 0.0
+
+        return cost, area, -final_L2D, CMy, CLtot_scalar, CDi_arr[-1], CDo_arr[-1], cd0_total, CDi_visc_arr[-1], L_D_3
 

@@ -260,9 +260,9 @@ B  = (Mto)/A
 Wl_min = np.min(B[:,0])
 Wl_max = np.max(B[:,0])
 Wing_Area = [1.2*float(Wl_min),float(Wl_max)] #TO move it away from the stall speed
-print(Wing_Area)
+print(f"Wing_Area: {Wing_Area}")
 Wing_span =  np.sqrt(AR*np.array(Wing_Area))#Design Variable
-print(Wing_span)
+print(f"Wing_span: {Wing_span}")
 
 Pl_min = np.min(B[:,1])
 Pl_max = np.max(B[:,1])
@@ -279,6 +279,31 @@ plt.plot([Wing_Loading_Stall, Wing_Loading_Stall],[0, 20*np.max(feasible_points[
 plt.scatter(feasible_points[:,0], feasible_points[:,1], color='red', s=2, label='Feasible Region')
 plt.legend()
 #plt.show()
+
+
+def compute_cl_cruise(wing_area=None):
+    """Compute CL required for steady level cruise.
+
+    If `wing_area` is None, use the Wing_Area value computed earlier
+    (line ~262). `Wing_Area` is typically a two-element list [low, high];
+    in that case this function uses the lower bound (index 0) by default.
+    """
+    global Wing_Area
+    if wing_area is None:
+        if isinstance(Wing_Area, (list, tuple, np.ndarray)):
+            S = float(Wing_Area[0])
+        else:
+            S = float(Wing_Area)
+    else:
+        S = float(wing_area)
+
+    W = float(Mto)  # Mto already in Newtons in this module
+    rho = float(rho_c)
+    V = float(inputs.get('cruise_speed', 0.0))
+    if S <= 0 or V <= 0 or rho <= 0:
+        raise ValueError("Invalid parameters for CL cruise calculation")
+    cl_cruise = (2.0 * W) / (rho * V**2 * S)
+    return cl_cruise
 
 
 

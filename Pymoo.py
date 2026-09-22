@@ -126,9 +126,9 @@ class Genetic(Problem):
         self.evaluation_records = []
 
     @staticmethod
-    def _run_worker(i, vsp_file_abs, engine_power, cg_val):
+    def _run_worker(i, vsp_file_abs, engine_power, cg_val, wing_area_pf):
         """Launch a VSPAero worker subprocess, retrying one native crash."""
-        first_result = Genetic._run_worker_once(i, vsp_file_abs, engine_power, cg_val)
+        first_result = Genetic._run_worker_once(i, vsp_file_abs, engine_power, cg_val, wing_area_pf)
         if first_result.get("success"):
             return first_result
 
@@ -142,7 +142,7 @@ class Genetic(Problem):
             return first_result
 
         print(f"    Design {i}: worker failed once; retrying in a fresh process...")
-        second_result = Genetic._run_worker_once(i, vsp_file_abs, engine_power, cg_val)
+        second_result = Genetic._run_worker_once(i, vsp_file_abs, engine_power, cg_val, wing_area_pf)
         if second_result.get("success"):
             return second_result
 
@@ -153,11 +153,11 @@ class Genetic(Problem):
         }
 
     @staticmethod
-    def _run_worker_once(i, vsp_file_abs, engine_power, cg_val):
+    def _run_worker_once(i, vsp_file_abs, engine_power, cg_val, wing_area_pf):
         """Launch a single VSPAero worker subprocess. Called from thread pool."""
         worker_cmd = [
             sys.executable, "vsp_worker.py",
-            vsp_file_abs, str(engine_power), str(cg_val)
+            vsp_file_abs, str(engine_power), str(cg_val), str(wing_area_pf)
         ]
         proc = subprocess.Popen(
             worker_cmd,
@@ -262,7 +262,13 @@ class Genetic(Problem):
                 vsp_file_abs = os.path.abspath(vsp_file)
                 design_row = temp_df.iloc[i:i+1]
                 engine_power = design_row["Power"].iloc[0]
-                vsp_jobs[i] = (vsp_file_abs, engine_power, design_row)
+                # Compute wing planform area for this candidate (S = b^2 / AR)
+                wing_span_val = float(design_row["Wing_Span"].iloc[0])
+                try:
+                    wing_area_pf = (wing_span_val ** 2) / AR
+                except Exception:
+                    wing_area_pf = float(design_row["Wing_Span"].iloc[0])
+                vsp_jobs[i] = (vsp_file_abs, engine_power, design_row, wing_area_pf)
             except Exception as e:
                 print(f"    Geometry {i+1}/{n_candidates} FAILED: {type(e).__name__}: {str(e)[:150]}")
                 geometry_errors.add(i)
@@ -279,9 +285,9 @@ class Genetic(Problem):
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=N_PARALLEL_WORKERS) as executor:
             futures = {}
-            for i, (vsp_file_abs, engine_power, _) in vsp_jobs.items():
+            for i, (vsp_file_abs, engine_power, _, wing_area_pf) in vsp_jobs.items():
                 future = executor.submit(
-                    self._run_worker, i, vsp_file_abs, engine_power, cg)
+                    self._run_worker, i, vsp_file_abs, engine_power, cg, wing_area_pf)
                 futures[future] = i
 
             for future in concurrent.futures.as_completed(futures):

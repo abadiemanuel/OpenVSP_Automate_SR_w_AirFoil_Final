@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from distutils.command.config import config
 import os, sys, glob
 import concurrent.futures
@@ -193,6 +194,7 @@ class Genetic(Problem):
         json_line = marker_match.group(1).strip()
         return json.loads(json_line)
 
+    @abstractmethod
     def _evaluate(self, x, out, *args, **kwargs ):
         temp_df = pd.DataFrame(list(x), columns= list(mixed_vars.keys()))
         self.last_temp_df = temp_df
@@ -328,6 +330,8 @@ class Genetic(Problem):
                     "L/D_2": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
+                    "CL_req": float(result["CL_req"]),
+                    "AoA_at_CL": np.nan,
                 })
                 self.evaluation_records.append(base_row)
                 continue
@@ -337,7 +341,7 @@ class Genetic(Problem):
                 error_msg = result.get("error", "unknown") if result else "no result"
                 print(f"    Design {i} failed: {error_msg[:150]}")
                 F.append([1e6, -1.0, -100.0])
-                G.append([1e6, 1e6, 1e6])
+                G.append([1e6, 1e6, 1e6]) 
                 base_row.update({
                     "Area": 1e6,
                     "L2D": -1.0,
@@ -351,6 +355,8 @@ class Genetic(Problem):
                     "L/D_2": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
+                    "CL_req": float(result["CL_req"]),
+                    "AoA_at_CL": np.nan,
                 })
                 self.evaluation_records.append(base_row)
                 continue
@@ -376,7 +382,7 @@ class Genetic(Problem):
 
                 base_row.update({
                     "Area": f_2,
-                    "L2D": float(result["L2D"]),
+                    "L2D": float(-result["L2D"]),
                     "L/D_2": -f_3,
                     "Config": f_4,
                     "CMy": constraint_1,
@@ -387,6 +393,8 @@ class Genetic(Problem):
                     "L/D_2": float(result["L/D_2"]),
                     "CDi": float(result["CDi"]),
                     "CDi_visc": float(result["CDi_visc"]),
+                    "CL_req": float(result["CL_req"]),
+                    "AoA_at_CL": float(result["AoA_at_CL"]),
                 })
                 self.evaluation_records.append(base_row)
             except Exception as e:
@@ -406,6 +414,8 @@ class Genetic(Problem):
                     "L/D_2": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
+                    "CL_req": float(result["CL_req"]),
+                    "AoA_at_CL": np.nan,
                 })
                 self.evaluation_records.append(base_row)
 
@@ -527,8 +537,8 @@ last10_df.to_csv("last10_gens.csv", index=False)
 if res.X is not None and res.F is not None:
     results_df = pd.DataFrame(list(res.X), columns=var_names)
     results_df['Area'] = res.F[:,0]
-    results_df['L2D'] = -res.F[:,1]
-    results_df['L/D_2'] = 0  #-res.F[:,1]
+    results_df['L/D_2'] = -res.F[:,1]
+    results_df['L2D'] = 0  #-res.F[:,1]
     results_df['Config'] = -res.F[:,2]
     pd.set_option('display.max_rows', 20)
 

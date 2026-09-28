@@ -59,7 +59,7 @@ def main():
         # Wing_Area value defined in Sizing.py (line ~262). Per request, the
         # sizing module now owns the CL_cruise calculation and its default
         # uses the Wing_Area value computed there.
-        from Sizing import compute_cl_cruise
+        # from Sizing import compute_cl_cruise
 
         aero = Aero(path=local_vsp_file, Engine_Power=engine_power, xcg=cg)
         # Keep planform area recorded, but compute and store CL_cruise from Sizing
@@ -72,24 +72,26 @@ def main():
                 aero.CL_cruise = compute_cl_cruise(wing_area_planform)
             except Exception:
                 aero.CL_cruise = None
-        cost, area, neg_L2D, CMy, CLtot, CDi, CDo, cd0_total, CDi_visc, L_D_3 = aero.compute_objective()
+        cost, area, neg_L2D, CMy, CLtot, CDi, CDo, cd0_total, CDi_visc, L_D_3, CL_req, AoA_at_CL = aero.compute_objective()
         CD_vsp = CDi + CDo
         CD_hyb = CDi + cd0_total + CDi_visc
         l_d_2 = CLtot / CD_hyb if CD_hyb else 0.0
         result = {
             "success": True,
             "cost": cost,
-            "area": list(area),       # area is a list of component areas
-            "L2D": -neg_L2D,           # compute_objective returns -L2D; undo negation
+            "area": list(area),             # area is a list of component areas
+            "L2D": -neg_L2D,                # compute_objective returns -L2D; undo negation
             "CMy": CMy,
-            "cd0_total": cd0_total,    # total parasitic drag coefficient
-            "CD_vsp": CD_vsp,           # VSPAero total drag coefficient
-            "CD_hyb": CD_hyb,           # hybrid drag coefficient
-            "CLtot": CLtot,               # total lift coefficient
-            "L/D_2": l_d_2,                # L/D based on hybrid drag (CDi + cd0_total)
-            "L/D_3": L_D_3,               # Mission-representative L/D at CL_req
+            "cd0_total": cd0_total,         # total parasitic drag coefficient
+            "CD_vsp": CD_vsp,               # VSPAero total drag coefficient
+            "CD_hyb": CD_hyb,               # hybrid drag coefficient
+            "CLtot": CLtot,                 # total lift coefficient
+            "L/D_2": l_d_2,                 # L/D based on hybrid drag (CDi + cd0_total)
+            "L/D_3": L_D_3,                 # Mission-representative L/D at CL_req
             "CDi": CDi,                     # induced drag coefficient
             "CDi_visc": CDi_visc,           # viscous induced drag coefficient
+            "CL_req": CL_req,               # Required lift coefficient for mission 
+            "AoA_at_CL": AoA_at_CL,         # Angle of attack at required CL
         }
 
     except Exception as e:

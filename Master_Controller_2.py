@@ -233,6 +233,6 @@ class Master_Designer:
         return filename #path for Aero Analysis
 
 
-"""top_n_df = pd.read_csv('design_compare.csv') #uncommented by Manuel 5/7 since running mastercontoller2 did not continue the workflow
+"""top_n_df = pd.read_csv('design_compare.csv')
 Designer = Master_Designer(top_n_df)
-Designer.process_population()"""
+Designer.process_population()""" #uncommented by Manuel 5/7 since running mastercontoller2 did not continue the workflow

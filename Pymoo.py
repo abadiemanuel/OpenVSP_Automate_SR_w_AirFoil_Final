@@ -320,7 +320,7 @@ class Genetic(Problem):
                 base_row.update({
                     "Area": 1e6,
                     "L2D": -1.0,
-                    "L/D_2": -1.0,
+                    "L/D_3": -1.0,
                     "Config": -100.0,
                     "CMy": np.nan,
                     "cd0_total": np.nan,
@@ -328,7 +328,6 @@ class Genetic(Problem):
                     "CD_hyb": np.nan,
                     "CLtot": np.nan,
                     "L/D_2": np.nan,
-                    "L/D_3": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
                     "CL_req": float(result["CL_req"]),
@@ -346,7 +345,7 @@ class Genetic(Problem):
                 base_row.update({
                     "Area": 1e6,
                     "L2D": -1.0,
-                    "L/D_2": -1.0,
+                    "L/D_3": -1.0,
                     "Config": -100.0,
                     "CMy": np.nan,
                     "cd0_total": np.nan,
@@ -354,7 +353,6 @@ class Genetic(Problem):
                     "CD_hyb": np.nan,
                     "CLtot": np.nan,
                     "L/D_2": np.nan,
-                    "L/D_3": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
                     "CL_req": float(result["CL_req"]),
@@ -367,7 +365,7 @@ class Genetic(Problem):
                 design_row = vsp_jobs[i][2]
                 f_1 = float(result["cost"])
                 f_2 = float(sum(result["area"]))
-                f_3 = float(-result["L/D_2"])  # Negate for minimization, using parasitic-drag coorected L/D_2
+                f_3 = float(-result["L/D_3"])  # Negate for minimization, using parasitic-drag corrected L/D_3 at CL_req
                 constraint_1 = float(result["CMy"])
 
                 f_4 = -1*(
@@ -385,7 +383,7 @@ class Genetic(Problem):
                 base_row.update({
                     "Area": f_2,
                     "L2D": float(-result["L2D"]),
-                    "L/D_2": -f_3,
+                    "L/D_3": -f_3,
                     "Config": f_4,
                     "CMy": constraint_1,
                     "cd0_total": float(result["cd0_total"]),
@@ -393,7 +391,6 @@ class Genetic(Problem):
                     "CD_hyb": float(result["CD_hyb"]),
                     "CLtot": float(result["CLtot"]),
                     "L/D_2": float(result["L/D_2"]),
-                    "L/D_3": float(result["L/D_3"]),
                     "CDi": float(result["CDi"]),
                     "CDi_visc": float(result["CDi_visc"]),
                     "CL_req": float(result["CL_req"]),
@@ -407,7 +404,7 @@ class Genetic(Problem):
                 base_row.update({
                     "Area": 1e6,
                     "L2D": -1.0,
-                    "L/D_2": -1.0,
+                    "L/D_3": -1.0,
                     "Config": -100.0,
                     "CMy": np.nan,
                     "cd0_total": np.nan,
@@ -415,7 +412,6 @@ class Genetic(Problem):
                     "CD_hyb": np.nan,
                     "CLtot": np.nan,
                     "L/D_2": np.nan,
-                    "L/D_3": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
                     "CL_req": float(result["CL_req"]),
@@ -541,7 +537,7 @@ last10_df.to_csv("last10_gens.csv", index=False)
 if res.X is not None and res.F is not None:
     results_df = pd.DataFrame(list(res.X), columns=var_names)
     results_df['Area'] = res.F[:,0]
-    results_df['L/D_2'] = -res.F[:,1]
+    results_df['L/D_3'] = -res.F[:,1]
     results_df['L2D'] = 0  #-res.F[:,1]
     results_df['Config'] = -res.F[:,2]
     pd.set_option('display.max_rows', 20)
@@ -555,7 +551,7 @@ else:
     print("This usually means no feasible solutions were found.")
     results_df = pd.DataFrame()  # Empty dataframe
 
-objective_names = ["Area", "L/D_2", "Config"]
+objective_names = ["Area", "L/D_3", "Config"]
 if problem.last_objectives is not None and problem.last_temp_df is not None:
     objective_df = pd.DataFrame(problem.last_objectives, columns = objective_names)
     temporary_df = pd.concat([problem.last_temp_df,objective_df], axis = 1)

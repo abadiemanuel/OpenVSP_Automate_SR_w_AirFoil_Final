@@ -369,7 +369,7 @@ class Aero:
                     # Hybrid drag uses CDi + parasitic (cd0_total) + viscous-induced
                     CD_hyb_at = CDi_at + float(cd0_total) + CDi_visc_at
                     if CD_hyb_at > 0:
-                        L_D_3 = float(CL_req / CD_hyb_at)
+                        L_D_3 = float(CL_at_AoA / CD_hyb_at)
                     else:
                         L_D_3 = 0.0
         except Exception as e:

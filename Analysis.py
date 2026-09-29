@@ -1,6 +1,7 @@
 import openvsp as vsp
 import os
 from Sizing import *
+import pandas as pd
 """
 This section interacts with VSPAero in OpenVSP
 """
@@ -113,7 +114,7 @@ class Aero:
         vsp.SetIntAnalysisInput(analysis_name, "NumWakeNodes", [32])
         vsp.SetIntAnalysisInput(analysis_name, "WakeNumIter", [5])
         vsp.SetDoubleAnalysisInput(analysis_name, "Xcg", [self.xcg])
-        vsp.SetIntAnalysisInput(analysis_name, "UnsteadyType", [vsp.STABILITY_DEFAULT])
+        vsp.SetIntAnalysisInput(analysis_name, "UnsteadyType", [vsp.STABILITY_OFF]) #Removed [vsp.STABILITY_DEFAULT] due to data handling issues. Steady analysis was not doind anything accurately
 
         print("VSPAero inputs configured")
         vsp.Update()
@@ -134,30 +135,57 @@ class Aero:
             vsp.ClearVSPModel()
             raise RuntimeError("VSPAero analysis did not complete successfully")
 
+        # #Process report
+        # print("Looking for VSPAERO_History results...")
+        # history_res = vsp.FindLatestResultsID("VSPAERO_History")
+        # print(f"History result ID: {history_res}")
+        # # Check if history results exist
+        # if not history_res or history_res == "":
+        #     print("Warning: Could not find VSPAERO_History results")
+        #     # Try to list all available results
+        #     print("Attempting to find available result types...")
+        #     vsp.ClearVSPModel()
+        #     raise RuntimeError("VSPAERO_History results not found")
+
         #Process report
-        print("Looking for VSPAERO_History results...")
-        history_res = vsp.FindLatestResultsID("VSPAERO_History")
-        print(f"History result ID: {history_res}")
-        
+        print("Looking for VSPAERO_Polar results...")
+        polar = vsp.FindLatestResultsID("VSPAERO_Polar")
+        print(f"Polar result ID: {polar}")
         # Check if history results exist
-        if not history_res or history_res == "":
-            print("Warning: Could not find VSPAERO_History results")
+        if not polar or polar == "":
+            print("Warning: Could not find VSPAERO_Polar results")
             # Try to list all available results
             print("Attempting to find available result types...")
             vsp.ClearVSPModel()
-            raise RuntimeError("VSPAERO_History results not found")
+            raise RuntimeError("VSPAERO_Polar results not found")
             
         print("Extracting aerodynamic data...")
-        CLtot = vsp.GetDoubleResults(history_res, "CLtot")
-        CDtot = vsp.GetDoubleResults(history_res, "CDtot")
-        CDi = vsp.GetDoubleResults(history_res, "CDi")
-        Cdo = vsp.GetDoubleResults(history_res, "CDo")
-        L2D = vsp.GetDoubleResults(history_res, "L/D")
-        E = vsp.GetDoubleResults(history_res, "E")
+        alphas = vsp.GetDoubleResults(polar, "Alpha")
+        CLtot = vsp.GetDoubleResults(polar, "CLtot")
+        CDtot = vsp.GetDoubleResults(polar, "CDtot")
+        CDi = vsp.GetDoubleResults(polar, "CDi")
+        Cdo = vsp.GetDoubleResults(polar, "CDo")
+        L2D = vsp.GetDoubleResults(polar, "L_D")
+        E = vsp.GetDoubleResults(polar, "E")
         # CMx/CMy/CMz may not be available in VLM mode without stability analysis
-        CMx = vsp.GetDoubleResults(history_res, "CMx") or [0.0]
-        CMy = vsp.GetDoubleResults(history_res, "CMy") or [0.0]
-        CMz = vsp.GetDoubleResults(history_res, "CMz") or [0.0]
+        CMx = vsp.GetDoubleResults(polar, "CMxtot") or [0.0]
+        CMy = vsp.GetDoubleResults(polar, "CMytot") or [0.0]
+        CMz = vsp.GetDoubleResults(polar, "CMztot") or [0.0]
+
+        # results_polar = []
+        # polar = vsp.FindLatestResultsID("VSPAERO_Polar")
+        # alphas = np.array(vsp.GetDoubleResults(polar, "Alpha"))   # read, don't reconstruct
+        # CL     = np.array(vsp.GetDoubleResults(polar, "CLtot"))
+        # CDi    = np.array(vsp.GetDoubleResults(polar, "CDi"))
+        # CDo    = np.array(vsp.GetDoubleResults(polar, "CDo"))
+        # # assert len(alphas) == len(CL) == alpha_npts
+        # results_polar = np.empty((len(alphas), 4))
+        # results_polar[:,0] = alphas
+        # results_polar[:,1] = CL
+        # results_polar[:,2] = CDi
+        # results_polar[:,3] = CDo
+        # print(f' Polar results: {results_polar}', flush=True)
+
 
         # Check if we got valid results
         if not CLtot or not CDtot or not L2D or not E:
@@ -186,15 +214,15 @@ class Aero:
 
         # Construct alpha array based on inputs used for the sweep so callers can
         # interpolate at arbitrary CL or alpha values.
-        alpha_start = -6.0
-        alpha_end = 10.0
-        alpha_npts = 7
-        try:
-            import numpy as _np
-            alphas = list(_np.linspace(alpha_start, alpha_end, alpha_npts))
-        except Exception:
-            # Fallback to indices if numpy not available
-            alphas = list(range(len(CLtot)))
+        # alpha_start = -6.0
+        # alpha_end = 10.0
+        # alpha_npts = 7
+        # try:
+        #     import numpy as _np
+        #     alphas = list(_np.linspace(alpha_start, alpha_end, alpha_npts))
+        # except Exception:
+        #     # Fallback to indices if numpy not available
+        #     alphas = list(range(len(CLtot)))
 
         print(f"VSPAero analysis successful: {len(CLtot)} alpha points")
         vsp.ClearVSPModel()
@@ -331,6 +359,8 @@ class Aero:
                 else:
                     # Interpolate AoA where CL == CL_req
                     AoA_at_CL = float(_np.interp(CL_req, CL_sorted, alpha_sorted))
+                    # Interpolate CL at AoA where CL == CL_req
+                    CL_at_AoA = float(_np.interp(AoA_at_CL, alpha_sorted, CL_sorted))
                     # Interpolate induced/viscous/parasite contributions at that AoA
                     CDi_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDi_sorted))
                     CDi_visc_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDi_visc_sorted))
@@ -352,5 +382,5 @@ class Aero:
         except Exception:
             CLtot_scalar = float(CL_req) if CL_req is not None else 0.0
 
-        return cost, area, -final_L2D, CMy, CLtot_scalar, CDi_arr[-1], CDo_arr[-1], cd0_total, CDi_visc_arr[-1], L_D_3
+        return cost, area, -final_L2D, CMy, CL_at_AoA, CDi_arr[-1], CDo_arr[-1], cd0_total, CDi_visc_arr[-1], L_D_3, CL_req, AoA_at_CL,
 

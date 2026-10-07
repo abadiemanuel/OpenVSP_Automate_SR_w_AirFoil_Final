@@ -348,15 +348,23 @@ class Aero:
             CDi_visc_sorted = _np.array(CDi_visc_arr)[sort_idx]
             CDo_sorted = _np.array(CDo_arr)[sort_idx]
 
+
+            AoA_at_CL = CL_at_AoA = L_D_3 = float("nan")
+            cl_violation = 0.0
             if CL_req is None:
                 L_D_3 = 0.0
+                status = "no_CL_req"; cl_violation = 1e3  #Added error handling messages
             else:
                 CL_max = CL_sorted.max()
                 CL_min = CL_sorted.min()
                 if CL_req > CL_max:
                     # Candidate never reaches required CL -> infeasible
                     L_D_3 = 0.0
+                    status = "CL_unreachable"; cl_violation = CL_req - CL_max
+                elif CL_req < CL_min:
+                     status = "CL_below_sweep"; cl_violation = CL_min - CL_req
                 else:
+                    status = "ok"
                     # Interpolate AoA where CL == CL_req
                     AoA_at_CL = float(_np.interp(CL_req, CL_sorted, alpha_sorted))
                     # Interpolate CL at AoA where CL == CL_req
@@ -371,6 +379,7 @@ class Aero:
                     if CD_hyb_at > 0:
                         L_D_3 = float(CL_at_AoA / CD_hyb_at)
                     else:
+                        status = "CD_hyb_zero"; cl_violation = 1e3
                         L_D_3 = 0.0
         except Exception as e:
             print(f"Warning: failed to compute L/D_3: {e}")

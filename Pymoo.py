@@ -330,7 +330,7 @@ class Genetic(Problem):
                     "L/D_2": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
-                    "CL_req": float(result["CL_req"]),
+                    "CL_req": np.nan,
                     "AoA_at_CL": np.nan,
                 })
                 self.evaluation_records.append(base_row)
@@ -355,7 +355,7 @@ class Genetic(Problem):
                     "L/D_2": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
-                    "CL_req": float(result["CL_req"]),
+                    "CL_req": np.nan,
                     "AoA_at_CL": np.nan,
                 })
                 self.evaluation_records.append(base_row)
@@ -378,7 +378,7 @@ class Genetic(Problem):
                 f_4 = float(f_4)
                 F.append([f_2,f_3,f_4])
                 G.append([constraint_1, constraint_2, constraint_3])
-                print(f"    Design {i}: cost={f_1:.2f}, area={f_2:.2f}, L/D_2={-f_3:.2f}, config_score={f_4:.2f}")
+                print(f"    Design {i}: cost={f_1:.2f}, area={f_2:.2f}, L/D_3={-f_3:.2f}, config_score={f_4:.2f}")
 
                 base_row.update({
                     "Area": f_2,
@@ -414,7 +414,7 @@ class Genetic(Problem):
                     "L/D_2": np.nan,
                     "CDi": np.nan,
                     "CDi_visc": np.nan,
-                    "CL_req": float(result["CL_req"]),
+                    "CL_req": np.nan,
                     "AoA_at_CL": np.nan,
                 })
                 self.evaluation_records.append(base_row)
@@ -436,7 +436,7 @@ class Genetic(Problem):
 problem = Genetic()
 
 algorithm = NSGA2(
-    pop_size=1,
+    pop_size=10,
     sampling=MixedVariableSampling(),
     mating=MixedVariableMating(eliminate_duplicates= MixedVariableDuplicateElimination()),
     eliminate_duplicates=False

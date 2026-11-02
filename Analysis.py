@@ -168,9 +168,9 @@ class Aero:
         L2D = vsp.GetDoubleResults(polar, "L_D")
         E = vsp.GetDoubleResults(polar, "E")
         # CMx/CMy/CMz may not be available in VLM mode without stability analysis
-        CMx = vsp.GetDoubleResults(polar, "CMxtot") or [0.0]
-        CMy = vsp.GetDoubleResults(polar, "CMytot") or [0.0]
-        CMz = vsp.GetDoubleResults(polar, "CMztot") or [0.0]
+        CMx = vsp.GetDoubleResults(polar, "CMx") or [0.0]
+        CMy = vsp.GetDoubleResults(polar, "CMy") or [0.0]
+        CMz = vsp.GetDoubleResults(polar, "CMz") or [0.0]
 
         # results_polar = []
         # polar = vsp.FindLatestResultsID("VSPAERO_Polar")
@@ -291,105 +291,118 @@ class Aero:
         return cost
 
     def compute_objective(self):
-        #we normalize by 208270 which is the assumed max cost of the power we can have 2000 hp
-        #L2D might be divided by 100
+        """
+        Run the aero pipeline and return a dict that ALWAYS has the same keys.
+        Feasibility is reported in "status", never by raising:
+            ok              CL_req reached inside the sweep; objectives valid
+            CL_unreachable  CL_req > CL_max of the valid sweep  (graded in Pymoo)
+            CL_below_sweep  CL_req < CL_min of the valid sweep  (graded in Pymoo)
+            no_CL_req       CL_req could not be computed
+            aero_invalid    sweep unusable (non-finite, CD <= 0, non-monotonic CL, ...)
+        Exceptions raised by VSPAero()/ParasiticDrag() still propagate -> worker crash.
+        """
+        import numpy as np
+        nan = float("nan")
         print("\n=== Starting objective computation ===")
+
         area = self.ComputeArea()
         self.ComputeGeom()
-        # VSPAero now returns sweep arrays and alphas for interpolation
-        L2D_arr, CDtot_arr, CMy, CLtot_arr, E_arr, CDo_arr, CDi_arr, CDi_visc_arr, alphas = self.VSPAero()
-        cd0_total = self.ParasiticDrag()
-        # Legacy final L2D value (use last point or best non-zero)
-        try:
-            final_L2D = L2D_arr[-1]
-            if final_L2D == 0.0 and len(L2D_arr) > 1:
-                nonzero = [v for v in L2D_arr if v != 0.0]
-                if nonzero:
-                    final_L2D = max(nonzero)
-        except Exception:
-            final_L2D = 0.0
-        if final_L2D > 50:
-            final_L2D = 50
-        cost = self.cost()
-        #ost_ratio = cost/208270
-        #We normalize the area with wetted area of global hawk
-        #rea_ratio = sum(area)/218.546
-       #L2D_ratio = L2D/50
-       #E_ratio = E/100
-       #if cost_ratio > 1:
-       #    cost_ratio = 1
-       #elif area_ratio > 1:
-       #  area_ratio = 1
-        #total = -0.4*L2D_ratio -0*E_ratio + 0.2*cost_ratio + 0.3*area_ratio
-        #return total, L2D,CMy, Cl, Cdtotal, cost,area
-        print(f"Objectives: cost={cost:.2f}, area={sum(area):.2f}, L/D={final_L2D:.2f}, CMy={CMy:.4f}")
-        print("=== Objective computation complete ===\n")
-        # --- New: compute mission-representative L/D_3 at required CL (CL_req)
+        L2D_arr, CDtot_arr, CMy_delta, CLtot_arr, E_arr, CDo_arr, CDi_arr, CDi_visc_arr, alphas = self.VSPAero()
+        cd0_total = float(self.ParasiticDrag())
+
+        out = {
+            "status": "ok",
+            "cost": float(self.cost()),
+            "area": [float(v) for v in area],
+            "cd0_total": cd0_total,
+            "CMy": float(CMy_delta),
+            "SM": nan,
+            "CL_req": nan, "CL_min": nan, "CL_max": nan, "AoA_at_CL": nan,
+            "CLtot": nan, "CDi": nan, "CDi_visc": nan,
+            "CD_vsp": nan, "CD_hyb": nan, "L/D_2": nan, "L/D_3": nan,
+            "n_bad_alpha": 0,
+        }
+
+        # ── 1. Required cruise CL ────────────────────────────────────────────
         try:
             from Sizing import compute_cl_cruise
-            # Prefer candidate's wing planform area if available on the Aero instance
             if self.wing_area_planform is not None:
                 CL_req = compute_cl_cruise(self.wing_area_planform)
             else:
+                print("WARNING: wing_area_planform not set; CL_req uses Sizing default area")
                 CL_req = compute_cl_cruise()
-        except Exception:
-            CL_req = None
-
-        L_D_3 = 0.0
-        try:
-            import numpy as _np
-            CL_arr = _np.array(CLtot_arr)
-            alpha_arr = _np.array(alphas)
-            # Sort by CL to ensure monotonic interpolation
-            sort_idx = _np.argsort(CL_arr)
-            CL_sorted = CL_arr[sort_idx]
-            alpha_sorted = alpha_arr[sort_idx]
-            CDi_sorted = _np.array(CDi_arr)[sort_idx]
-            CDi_visc_sorted = _np.array(CDi_visc_arr)[sort_idx]
-            CDo_sorted = _np.array(CDo_arr)[sort_idx]
-
-
-            AoA_at_CL = CL_at_AoA = L_D_3 = float("nan")
-            cl_violation = 0.0
-            if CL_req is None:
-                L_D_3 = 0.0
-                status = "no_CL_req"; cl_violation = 1e3  #Added error handling messages
-            else:
-                CL_max = CL_sorted.max()
-                CL_min = CL_sorted.min()
-                if CL_req > CL_max:
-                    # Candidate never reaches required CL -> infeasible
-                    L_D_3 = 0.0
-                    status = "CL_unreachable"; cl_violation = CL_req - CL_max
-                elif CL_req < CL_min:
-                     status = "CL_below_sweep"; cl_violation = CL_min - CL_req
-                else:
-                    status = "ok"
-                    # Interpolate AoA where CL == CL_req
-                    AoA_at_CL = float(_np.interp(CL_req, CL_sorted, alpha_sorted))
-                    # Interpolate CL at AoA where CL == CL_req
-                    CL_at_AoA = float(_np.interp(AoA_at_CL, alpha_sorted, CL_sorted))
-                    # Interpolate induced/viscous/parasite contributions at that AoA
-                    CDi_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDi_sorted))
-                    CDi_visc_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDi_visc_sorted))
-                    # Parasite Cdo at that AoA (from VSPAero CDo sweep)
-                    CDo_at = float(_np.interp(AoA_at_CL, alpha_sorted, CDo_sorted))
-                    # Hybrid drag uses CDi + parasitic (cd0_total) + viscous-induced
-                    CD_hyb_at = CDi_at + float(cd0_total) + CDi_visc_at
-                    if CD_hyb_at > 0:
-                        L_D_3 = float(CL_at_AoA / CD_hyb_at)
-                    else:
-                        status = "CD_hyb_zero"; cl_violation = 1e3
-                        L_D_3 = 0.0
+            CL_req = float(CL_req)
         except Exception as e:
-            print(f"Warning: failed to compute L/D_3: {e}")
-            L_D_3 = 0.0
+            print(f"WARNING: compute_cl_cruise failed: {type(e).__name__}: {e}")
+            CL_req = nan
 
-        # For backwards compatibility, return scalar CLtot as last-point value
-        try:
-            CLtot_scalar = float(CLtot_arr[-1])
-        except Exception:
-            CLtot_scalar = float(CL_req) if CL_req is not None else 0.0
+        if not np.isfinite(CL_req) or CL_req <= 0:
+            out["status"] = "no_CL_req"
+            return out
+        out["CL_req"] = CL_req
 
-        return cost, area, -final_L2D, CMy, CL_at_AoA, CDi_arr[-1], CDo_arr[-1], cd0_total, CDi_visc_arr[-1], L_D_3, CL_req, AoA_at_CL,
+        # ── 2. Keep only physically valid sweep points ──────────────────────
+        a   = np.asarray(alphas,    float)
+        CL  = np.asarray(CLtot_arr, float)
+        CD  = np.asarray(CDtot_arr, float)
+        CDi = np.asarray(CDi_arr,   float)
+        CDo = np.asarray(CDo_arr,   float)
 
+        if not (len(a) == len(CL) == len(CD) == len(CDi) == len(CDo)) or len(a) < 2:
+            print(f"aero_invalid: array lengths a={len(a)} CL={len(CL)} CD={len(CD)}")
+            out["status"] = "aero_invalid"
+            return out
+
+        valid = (np.isfinite(a) & np.isfinite(CL) & np.isfinite(CD) & np.isfinite(CDi) & np.isfinite(CDo)
+                 & (np.abs(CL) < 3.0) & (CD > 0.0) & (CD < 1.0))
+        out["n_bad_alpha"] = int((~valid).sum())
+
+        order = np.argsort(a)                       # sort by ALPHA, never by CL
+        a, CL, CD, CDi, CDo, valid = a[order], CL[order], CD[order], CDi[order], CDo[order], valid[order]
+        a_v, CL_v, CD_v, CDi_v, CDo_v = a[valid], CL[valid], CD[valid], CDi[valid], CDo[valid]
+
+        if len(a_v) < 4 or np.any(np.diff(CL_v) <= 0):
+            print(f"aero_invalid: {len(a_v)} valid points, CL monotonic={bool(np.all(np.diff(CL_v) > 0))}")
+            out["status"] = "aero_invalid"
+            return out
+
+        CL_min, CL_max = float(CL_v[0]), float(CL_v[-1])
+        out["CL_min"], out["CL_max"] = CL_min, CL_max
+
+        # ── 3. CL_req feasibility (graded in Pymoo) ─────────────────────────
+        if CL_req > CL_max:
+            out["status"] = "CL_unreachable"
+            print(f"CL_unreachable: CL_req={CL_req:.4f} > CL_max={CL_max:.4f} at alpha={a_v[-1]:.1f} deg")
+            return out
+        if CL_req < CL_min:
+            out["status"] = "CL_below_sweep"
+            print(f"CL_below_sweep: CL_req={CL_req:.4f} < CL_min={CL_min:.4f} at alpha={a_v[0]:.1f} deg")
+            return out
+
+        # ── 4. Cruise point and L/D_3 ───────────────────────────────────────
+        AoA = float(np.interp(CL_req, CL_v, a_v))
+        CDi_at = float(np.interp(AoA, a_v, CDi_v))
+        CDo_visc = CDo_v - CDo_v.min()               # viscous drag rise over VALID points only
+        CDi_visc_at = float(np.interp(AoA, a_v, CDo_visc))
+        CD_vsp_at = float(np.interp(AoA, a_v, CD_v))
+        CD_hyb = CDi_at + cd0_total + CDi_visc_at
+
+        if not np.isfinite(CD_hyb) or CD_hyb <= 0:
+            print(f"aero_invalid: CD_hyb={CD_hyb}")
+            out["status"] = "aero_invalid"
+            return out
+
+        out.update({
+            "AoA_at_CL": AoA,
+            "CLtot": CL_req,
+            "CDi": CDi_at,
+            "CDi_visc": CDi_visc_at,
+            "CD_vsp": CD_vsp_at,
+            "CD_hyb": CD_hyb,
+            "L/D_2": CL_req / CD_vsp_at if CD_vsp_at > 0 else nan,
+            "L/D_3": CL_req / CD_hyb,
+        })
+        print(f"ok: CL_req={CL_req:.4f}, alpha={AoA:.2f} deg, L/D_3={out['L/D_3']:.2f}, "
+              f"bad alpha pts={out['n_bad_alpha']}")
+        print("=== Objective computation complete ===\n")
+        return out

@@ -5,7 +5,7 @@ Called by Pymoo.py to isolate native OpenVSP/VSPAero crashes from the
 main optimization process.
 
 Usage:
-    python vsp_worker.py <vsp_file> <engine_power> <cg>
+    python vsp_worker.py <vsp_file> <engine_power> <cg> <wing_area_planform>
 
 Outputs JSON wrapped in markers so the parent can extract it even if
 VSPAero prints stray text to stdout.
@@ -55,44 +55,17 @@ def main():
         # copy so parallel workers do not contend for the same files.
         os.chdir(work_dir)
 
-        # Import compute_cl_cruise from Sizing and compute cruise CL using the
-        # Wing_Area value defined in Sizing.py (line ~262). Per request, the
-        # sizing module now owns the CL_cruise calculation and its default
-        # uses the Wing_Area value computed there.
-        # from Sizing import compute_cl_cruise
-
         aero = Aero(path=local_vsp_file, Engine_Power=engine_power, xcg=cg)
-        # Keep planform area recorded, but compute and store CL_cruise from Sizing
+        # CL_req is computed inside compute_objective() from THIS candidate's
+        # planform area, so each design is checked against its own wing.
         aero.wing_area_planform = wing_area_planform
-        try:
-            aero.CL_cruise = compute_cl_cruise()
-        except Exception:
-            # Fallback: compute using the candidate wing area if sizing call fails
-            try:
-                aero.CL_cruise = compute_cl_cruise(wing_area_planform)
-            except Exception:
-                aero.CL_cruise = None
-        cost, area, neg_L2D, CMy, CLtot, CDi, CDo, cd0_total, CDi_visc, L_D_3, CL_req, AoA_at_CL = aero.compute_objective()
-        CD_vsp = CDi + CDo
-        CD_hyb = CDi + cd0_total + CDi_visc
-        l_d_2 = CLtot / CD_hyb if CD_hyb else 0.0
-        result = {
-            "success": True,
-            "cost": cost,
-            "area": list(area),             # area is a list of component areas
-            "L2D": -neg_L2D,                # compute_objective returns -L2D; undo negation
-            "CMy": CMy,
-            "cd0_total": cd0_total,         # total parasitic drag coefficient
-            "CD_vsp": CD_vsp,               # VSPAero total drag coefficient
-            "CD_hyb": CD_hyb,               # hybrid drag coefficient
-            "CLtot": CLtot,                 # total lift coefficient
-            "L/D_2": l_d_2,                 # L/D based on hybrid drag (CDi + cd0_total)
-            "L/D_3": L_D_3,                 # Mission-representative L/D at CL_req
-            "CDi": CDi,                     # induced drag coefficient
-            "CDi_visc": CDi_visc,           # viscous induced drag coefficient
-            "CL_req": CL_req,               # Required lift coefficient for mission 
-            "AoA_at_CL": AoA_at_CL,         # Angle of attack at required CL
-        }
+
+        # compute_objective() returns a dict with every key Pymoo reads,
+        # including "status", "CL_req", "CL_min", "CL_max". An infeasible design
+        # (e.g. CL_req not reachable) is still a successful run: feasibility is
+        # reported in result["status"], not by success=False.
+        result = aero.compute_objective()
+        result["success"] = True
 
     except Exception as e:
         result = {
@@ -103,8 +76,8 @@ def main():
 
     # Emit result between unique markers so the parent can find it
     # even if OpenVSP prints unexpected text to stdout.
-    payload = json.dumps(result)
-    print(f">>>VSP_WORKER_RESULT>>>{payload}<<<VSP_WORKER_RESULT<<<")
+    payload = json.dumps(result, default=float)   # default=float handles numpy scalars
+    print(f">>>VSP_WORKER_RESULT>>>{payload}<<<VSP_WORKER_RESULT<<<", flush=True)
 
 
 if __name__ == "__main__":

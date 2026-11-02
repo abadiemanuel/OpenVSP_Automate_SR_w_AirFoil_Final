@@ -18,6 +18,7 @@ from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 from pymoo.visualization.scatter import Scatter
 from pymoo.termination.ftol import MultiObjectiveSpaceTermination
 from pymoo.indicators.hv import Hypervolume, HV
+from pymoo.core.callback import Callback
 
 
 from DT import decoded_pred
@@ -104,6 +105,41 @@ for key in keys_to_access:
   if key in data["Cost"]:
     data['Cost'][key] = 10
 
+# ── Constraint layout (pymoo convention: G <= 0 is satisfied) ─────────────────
+# g0: CL_req reachable inside the alpha sweep   (graded, dimensionless)
+# g1: VSPAero result physically valid           (5.0 if invalid)
+# g2: static margin >= SM_MIN                   (graded; disabled until Xcg is per-design)
+N_CONSTR = 3
+USE_SM_CONSTRAINT = False   # set True once the worker returns a per-design SM with a per-design Xcg
+SM_MIN = 0.05               # 5% MAC
+
+PEN_F = [1e6, 1e6, 1e6]     # area, -L/D, -config: worst value in EVERY objective
+G_FAIL = {
+    "geometry":     [10.0, 10.0, 10.0],   # never built (incl. fuselage packaging reject)
+    "crash":        [10.0, 10.0, 10.0],   # worker died / no usable result
+    "no_CL_req":    [10.0,  0.0,  0.0],
+    "aero_invalid": [ 0.0,  5.0,  0.0],
+}
+LOG_KEYS = ["CL_req", "CL_min", "CL_max", "AoA_at_CL", "CMy", "SM", "cd0_total",
+            "CD_vsp", "CD_hyb", "CLtot", "L/D_2", "CDi", "CDi_visc", "n_bad_alpha"]
+
+
+def config_score(design_row):
+    """ML configuration match score, negated for minimization (-30 is best)."""
+    return -float(
+        data["Cost"].get(design_row["Wing_Type"].iloc[0], 0) +
+        data["Cost"].get(design_row["Wing_Position"].iloc[0], 0) +
+        data["Cost"].get(design_row["Tail_Type"].iloc[0], 0)
+    )
+
+
+class FeasLog(Callback):
+    def notify(self, algorithm):
+        cv = algorithm.pop.get("CV").ravel()
+        print(f"  [Gen {algorithm.n_gen}] feasible {int(np.sum(cv <= 0))}/{len(cv)}, "
+              f"min CV {cv.min():.3g}")
+
+
 class HiddenPrints:
     def __enter__(self):
         self._original_stdout = sys.stdout
@@ -117,7 +153,7 @@ class HiddenPrints:
 
 class Genetic(Problem):
     def __init__(self, **kwargs):
-        super().__init__(vars = mixed_vars, n_obj=3, n_ieq_constr=3
+        super().__init__(vars = mixed_vars, n_obj=3, n_ieq_constr=N_CONSTR
                          ,**kwargs)
         self.last_temp_df = None
         self.last_objectives = None
@@ -307,117 +343,68 @@ class Genetic(Problem):
         print(f"  Phase 2 done: {succeeded}/{len(vsp_jobs)} succeeded in {phase2_time:.1f}s")
 
         # ── Phase 3: Collect results ──────────────────────────────────
+        # Every design gets a status. Only status == "ok" produces real objectives;
+        # everything else is infeasible with a G that ranks it sensibly.
         F, G = [], []
+        status_counts = {}
         for i in range(n_candidates):
-            design_row = temp_df.iloc[i]
-            base_row = design_row.to_dict()
+            base_row = temp_df.iloc[i].to_dict()
             base_row["Generation"] = self.current_generation
 
-            # Geometry creation failed
             if i in geometry_errors:
-                F.append([1e6, -1.0, -100.0])
-                G.append([1e6, 1e6, 1e6])
-                base_row.update({
-                    "Area": 1e6,
-                    "L2D": -1.0,
-                    "L/D_3": -1.0,
-                    "Config": -100.0,
-                    "CMy": np.nan,
-                    "cd0_total": np.nan,
-                    "CD_vsp": np.nan,
-                    "CD_hyb": np.nan,
-                    "CLtot": np.nan,
-                    "L/D_2": np.nan,
-                    "CDi": np.nan,
-                    "CDi_visc": np.nan,
-                    "CL_req": np.nan,
-                    "AoA_at_CL": np.nan,
-                })
-                self.evaluation_records.append(base_row)
-                continue
+                status, result = "geometry", {}
+            else:
+                result = worker_results.get(i) or {}
+                if result.get("success", False):
+                    status = result.get("status", "ok")
+                else:
+                    status = "crash"
+                    print(f"    Design {i} failed: {str(result.get('error', 'no result'))[:150]}")
 
-            result = worker_results.get(i)
-            if result is None or not result.get("success", False):
-                error_msg = result.get("error", "unknown") if result else "no result"
-                print(f"    Design {i} failed: {error_msg[:150]}")
-                F.append([1e6, -1.0, -100.0])
-                G.append([1e6, 1e6, 1e6]) 
-                base_row.update({
-                    "Area": 1e6,
-                    "L2D": -1.0,
-                    "L/D_3": -1.0,
-                    "Config": -100.0,
-                    "CMy": np.nan,
-                    "cd0_total": np.nan,
-                    "CD_vsp": np.nan,
-                    "CD_hyb": np.nan,
-                    "CLtot": np.nan,
-                    "L/D_2": np.nan,
-                    "CDi": np.nan,
-                    "CDi_visc": np.nan,
-                    "CL_req": np.nan,
-                    "AoA_at_CL": np.nan,
-                })
-                self.evaluation_records.append(base_row)
-                continue
-
+            f_row = list(PEN_F)
+            g_row = list(G_FAIL.get(status, G_FAIL["crash"]))
             try:
-                design_row = vsp_jobs[i][2]
-                f_1 = float(result["cost"])
-                f_2 = float(sum(result["area"]))
-                f_3 = float(-result["L/D_3"])  # Negate for minimization, using parasitic-drag corrected L/D_3 at CL_req
-                constraint_1 = float(result["CMy"])
-
-                f_4 = -1*(
-                    data["Cost"].get(design_row["Wing_Type"].iloc[0],0) +
-                    data["Cost"].get(design_row["Wing_Position"].iloc[0],0) +
-                    data["Cost"].get(design_row["Tail_Type"].iloc[0],0)
-                )
-                constraint_2 = 1+f_3
-                constraint_3 = -f_3-49
-                f_4 = float(f_4)
-                F.append([f_2,f_3,f_4])
-                G.append([constraint_1, constraint_2, constraint_3])
-                print(f"    Design {i}: cost={f_1:.2f}, area={f_2:.2f}, L/D_3={-f_3:.2f}, config_score={f_4:.2f}")
-
-                base_row.update({
-                    "Area": f_2,
-                    "L2D": float(-result["L2D"]),
-                    "L/D_3": -f_3,
-                    "Config": f_4,
-                    "CMy": constraint_1,
-                    "cd0_total": float(result["cd0_total"]),
-                    "CD_vsp": float(result["CD_vsp"]),
-                    "CD_hyb": float(result["CD_hyb"]),
-                    "CLtot": float(result["CLtot"]),
-                    "L/D_2": float(result["L/D_2"]),
-                    "CDi": float(result["CDi"]),
-                    "CDi_visc": float(result["CDi_visc"]),
-                    "CL_req": float(result["CL_req"]),
-                    "AoA_at_CL": float(result["AoA_at_CL"]),
-                })
-                self.evaluation_records.append(base_row)
+                if status == "ok":
+                    f_row = [float(np.sum(result["area"])),
+                             -float(result["L/D_3"]),
+                             config_score(vsp_jobs[i][2])]
+                    g_sm = (SM_MIN - float(result["SM"])) if USE_SM_CONSTRAINT else 0.0
+                    g_row = [0.0, 0.0, g_sm]
+                elif status == "CL_unreachable":
+                    g_row = [(float(result["CL_req"]) - float(result["CL_max"])) / float(result["CL_req"]), 0.0, 0.0]
+                elif status == "CL_below_sweep":
+                    g_row = [(float(result["CL_min"]) - float(result["CL_req"])) / float(result["CL_req"]), 0.0, 0.0]
             except Exception as e:
                 print(f"    Design {i} result parsing failed: {type(e).__name__}: {str(e)[:150]}")
-                F.append([1e6, -1.0, -100.0])
-                G.append([1e6, 1e6, 1e6])
-                base_row.update({
-                    "Area": 1e6,
-                    "L2D": -1.0,
-                    "L/D_3": -1.0,
-                    "Config": -100.0,
-                    "CMy": np.nan,
-                    "cd0_total": np.nan,
-                    "CD_vsp": np.nan,
-                    "CD_hyb": np.nan,
-                    "CLtot": np.nan,
-                    "L/D_2": np.nan,
-                    "CDi": np.nan,
-                    "CDi_visc": np.nan,
-                    "CL_req": np.nan,
-                    "AoA_at_CL": np.nan,
-                })
-                self.evaluation_records.append(base_row)
+                status = "parse_error"
+                f_row, g_row = list(PEN_F), list(G_FAIL["crash"])
+
+            # Never let NaN/inf reach pymoo (it breaks non-dominated sorting silently)
+            if not (np.all(np.isfinite(f_row)) and np.all(np.isfinite(g_row))):
+                status = "nonfinite"
+                f_row, g_row = list(PEN_F), list(G_FAIL["aero_invalid"])
+
+            F.append(f_row)
+            G.append(g_row)
+            status_counts[status] = status_counts.get(status, 0) + 1
+
+            if status == "ok":
+                print(f"    Design {i}: area={f_row[0]:.2f}, L/D_3={-f_row[1]:.2f}, config_score={f_row[2]:.2f}")
+            elif status not in ("crash", "geometry"):
+                print(f"    Design {i}: infeasible ({status}), G={np.round(g_row, 3).tolist()}")
+
+            ok = status == "ok"
+            base_row.update({
+                "status": status,
+                "Area": f_row[0] if ok else np.nan,
+                "L/D_3": -f_row[1] if ok else np.nan,
+                "Config": -f_row[2] if ok else np.nan,
+                "G0_CL": g_row[0], "G1_aero": g_row[1], "G2_SM": g_row[2],
+            })
+            base_row.update({k: result.get(k, np.nan) for k in LOG_KEYS})
+            self.evaluation_records.append(base_row)
+
+        print(f"  Status counts: {status_counts}")
 
         out["F"] = np.array(F)
         out["G"] = np.array(G)
@@ -436,23 +423,24 @@ class Genetic(Problem):
 problem = Genetic()
 
 algorithm = NSGA2(
-    pop_size=10,
+    pop_size=50,
     sampling=MixedVariableSampling(),
     mating=MixedVariableMating(eliminate_duplicates= MixedVariableDuplicateElimination()),
     eliminate_duplicates=False
 )
 
-n_gen = 1
+n_gen = 50
 
+start = time.time()
 res = minimize(
     problem,
     algorithm,
     ('n_gen', n_gen),
+    callback=FeasLog(),
     seed = 35,#42,
     save_history = True,
     verbose = False  # Changed to True to see progress
 )
-start = time.time()
 
 print(f"Starting optimization: {algorithm.pop_size} individuals x {n_gen} generations = {algorithm.pop_size * n_gen} evaluations")
 print(f"Estimated time: many hours (depending on VSPAero performance)")
@@ -478,18 +466,36 @@ gen_area_min, gen_l2d_min, gen_config_min = [], [], []
 gen_area_avg, gen_l2d_avg, gen_config_avg = [], [], []
 gen_area_max, gen_l2d_max, gen_config_max = [], [], []
 
-F_all = np.vstack([gen.pop.get("F") for gen in res.history])
-F_min = F_all.min(axis=0)
-F_max = F_all.max(axis=0)
+def feasible_F(pop):
+    """Objectives of feasible individuals only (CV <= 0). Penalty rows must never
+    enter the normalization bounds, the per-generation stats, or the hypervolume."""
+    cv = pop.get("CV").ravel()
+    return pop.get("F")[cv <= 0]
+
+F_feas_hist = [feasible_F(gen.pop) for gen in res.history]
+F_nonempty = [Ff for Ff in F_feas_hist if len(Ff)]
+if F_nonempty:
+    F_all = np.vstack(F_nonempty)
+    F_min = F_all.min(axis=0)
+    F_max = F_all.max(axis=0)
+else:
+    F_min = F_max = np.zeros(3)
+    print("WARNING: no feasible designs in any generation; HV will be NaN")
 
 def normalize(F):
     denom = F_max - F_min
     denom[denom == 0] = 1.0  # Avoid divide-by-zero for constant objectives
     return (F - F_min) / denom
-hv = HV(ref_point=np.array([1,1,1]))
-gen_hv = []
-for gen in res.history:
-    F = gen.pop.get("F")
+
+hv = HV(ref_point=np.array([1.1, 1.1, 1.1]))  # slightly beyond [0,1] so boundary points count
+gen_hv, gen_n_feasible = [], []
+for F in F_feas_hist:
+    gen_n_feasible.append(len(F))
+    if len(F) == 0:
+        for lst in (gen_area_min, gen_l2d_min, gen_config_min, gen_area_avg, gen_l2d_avg,
+                    gen_config_avg, gen_area_max, gen_l2d_max, gen_config_max, gen_hv):
+            lst.append(np.nan)
+        continue
     gen_area_min.append(np.min(F[:, 0]))
     gen_l2d_min.append(-np.min(F[:, 1]))
     gen_config_min.append(-np.min(F[:, 2]))
@@ -499,9 +505,8 @@ for gen in res.history:
     gen_area_max.append(np.max(F[:, 0]))
     gen_l2d_max.append(-np.max(F[:, 1]))
     gen_config_max.append(-np.max(F[:, 2]))
-    F_norm = normalize(F)
-    volume = hv.do(F_norm)
-    gen_hv.append(volume)
+    gen_hv.append(hv.do(normalize(F)))
+pd.DataFrame({"n_feasible": gen_n_feasible}).to_csv("Feasible_per_gen.csv", index=False)
 gen_area_avg_df = pd.DataFrame(gen_area_avg, columns=["Avg_Area"])
 gen_l2d_avg_df = pd.DataFrame(gen_l2d_avg,columns=["Avg_L2D"])
 gen_config_avg_df = pd.DataFrame(gen_config_avg, columns=["Avg_Config"])

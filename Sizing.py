@@ -1,92 +1,250 @@
+"""
+Initial sizing with the DBF electric-aircraft method (DBF_Sizing.py).
+
+Drop-in replacement for the framework's Sizing.py: it exports the same names
+(inputs, g, Mto, Vmax, Endurance, AR, payload_radius, cruise_mach, Wing_Area,
+Wing_span, Eng_pow, compute_fuselage_from_payload, compute_cl_cruise, ...), so
+`from Sizing import *` keeps working.
+
+Run it on its own (python Sizing.py) to enter the mission and requirements.
+The answers are saved to sizing_inputs.json next to this file. When the
+framework imports this module it reloads that file instead of asking, so
+parallel workers never wait for input. Without the file the defaults below are used.
+"""
+
 from operator import index
 import joblib
 from pyparsing import empty
 import math
 import numpy as np
+import json
+import os
+import warnings
 
-from vtkmodules.web.render_window_serializer import linspace
+# from vtkmodules.web.render_window_serializer import linspace
 from matplotlib import pyplot as plt
 from scipy.interpolate import interp1d
 import pandas as pd
 
+import DBF_Sizing as dbf
+
+
+INPUTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sizing_inputs.json")
+
 
 #Error checker
-def get_input(prompt, default):
+def get_input(prompt, default, allow_zero=False):
     while True:
         try:
-            value = input(f"{prompt} ")
+            value = input(f"{prompt} [{default}] ")
             value = float(value) if value.strip() else float(default)
-            if value <= 0:
-                print("Please enter a value greater than 0.")
+            if value < 0 or (value == 0 and not allow_zero):
+                print(f"Please enter a value greater than {'or equal to ' if allow_zero else ''}0.")
                 continue
             return value
         except ValueError:
             print("Invalid. Please enter a valid number.")
 
 
-# Use default values (no interactive input for automated runs)
-# To enable interactive mode, call get_interactive_inputs() function
-# Payload dimensions (m): allow user to provide cuboid box dims instead of a single volume
+def get_choice(prompt, default, options):
+    while True:
+        value = input(f"{prompt} ({'/'.join(options)}) [{default}] ").strip().lower()
+        if not value:
+            return default
+        if value in options:
+            return value
+        print(f"Please enter one of: {', '.join(options)}.")
+
+
+def get_yes_no(prompt, default):
+    while True:
+        value = input(f"{prompt} [{'y' if default else 'n'}] ").strip().lower()
+        if not value:
+            return default
+        if value in ("y", "n"):
+            return value == "y"
+        print("Please enter y or n.")
+
+
+# Mission inputs and performance requirements (framework units: kg, m^3, m/s, km, h, m)
+# Defaults follow Integrated Pyhtin/inputs.py: thesis mission without the loiter leg, no landing constraint
 inputs = {
-    'payload': 22.7, #kg
-    'payload_l': 0.889, # m
-    'payload_w': 0.2794, # m
-    'payload_h': 0.2794, # m
-    'cruise_speed': 28.3, #m/s  55kts
-    'Range': 185,   #km
-    'absolute_ceiling': 6096, #m
-    'service_ceiling': 4600, #m
-    'cl_max': 1.6, #max lift coefficient
-    'cruise_ceiling' :4600, #m
-    'Stall_Speed': 10.0 ,  # m/s According to EASA (55kts)
+    # Mission
+    'payload':0.51 , #kg (15.5 N)
+    'payload_l': 0.15, # m, placeholder
+    'payload_w': 0.1, # m, placeholder
+    'payload_h': 0.1, # m, placeholder
+    'best_range_distance': 0, #km, flown at the best-range speed (0 to skip)
+    'loiter_time': 0.21, #h (0 to skip)
+    'loiter_speed': 10.8, #m/s
+    'Cruise_distance': 16.1, #km (0 to skip)
+    'cruise_speed': 18.0, #m/s
+    'turns': 5, #360 deg turns (0 to skip)
+    'turn_type': 'bank', #'performance' (full-power sustained turn), 'bank' (set bank angle) or 'radius' (set radius)
+    'turn_speed': 10.5, #m/s
+    'turn_bank': 4.0, #deg, used when turn_type is 'bank'
+    'turn_radius': 0, #m, used when turn_type is 'radius'
+    'cruise_ceiling': 120, #m, altitude the mission legs are flown at (0 = sea level, 1.225 kg/m3)
+    # Performance requirements
+    'takeoff_distance': 1.0, #m, hand launch
+    'throw_speed': 7.5, #m/s, wind or hand-throw velocity at take-off
+    'max_speed': 18.0, #m/s
+    'approach_speed': 9.10, #m/s
+    'absolute_ceiling': 120.0, #m
+    'rate_of_climb': 300 / 60, #m/s
+    'landing': False, #include the Excel landing constraint
+    # Design point read off the constraint plot (0 = use the lightest feasible point)
+    'design_W_by_S': 51.5, #N/m^2
+    'design_P_to_W': 17.0, #W/N
 }
 
-def get_interactive_inputs():
-    """Call this function to enable interactive input mode"""
-    global inputs
-    inputs = {
-        'payload': get_input(("Enter payload (kg): "), 386),
-        'payload_l': get_input(("Enter payload length l_p (m): "), 2.5),
-        'payload_w': get_input(("Enter payload width w_p (m): "), 1.0),
-        'payload_h': get_input(("Enter payload height h_p (m): "), 1.0),
-        'cruise_speed': get_input(("Enter cruise speed (m/s): "),82),
-        'Range': get_input(("Enter range (km): "), 740.8),
-        'absolute_ceiling': get_input(("Enter Absolute ceiling (m): ") , 15240),
-        'service_ceiling': float(7620),
-        'cl_max': float(1.6),
-        'cruise_ceiling': get_input(("Enter Cruise_ceiling (m): "), 7620),
-        'Stall_Speed': get_input(("Enter Stall speed (m/s): ") , 40),# According to EASA
-    }
-    return inputs
+# def get_interactive_inputs():
+#     """Ask for the mission first, then the performance requirements. Enter keeps the value shown."""
+#     global inputs
+#     d = inputs
+#     print("\n--- Mission ---")
+#     inputs = {
+#         'payload': get_input("Enter payload (kg):", d['payload']),
+#         'payload_l': get_input("Enter payload length l_p (m):", d['payload_l']),
+#         'payload_w': get_input("Enter payload width w_p (m):", d['payload_w']),
+#         'payload_h': get_input("Enter payload height h_p (m):", d['payload_h']),
+#         'best_range_distance': get_input("Enter best-range cruise distance (km, 0 to skip):", d['best_range_distance'], allow_zero=True),
+#         'loiter_time': get_input("Enter loiter time (h, 0 to skip):", d['loiter_time'], allow_zero=True),
+#         'loiter_speed': get_input("Enter loiter speed (m/s):", d['loiter_speed']),
+#         'Cruise_distance': get_input("Enter cruise distance (km, 0 to skip):", d['Cruise_distance'], allow_zero=True),
+#         'cruise_speed': get_input("Enter cruise speed (m/s):", d['cruise_speed']),
+#         'turns': get_input("Enter number of turns (0 to skip):", d['turns'], allow_zero=True),
+#         'turn_type': get_choice("Turn type", d['turn_type'], ('performance', 'bank', 'radius')),
+#         'turn_speed': get_input("Enter turn speed (m/s):", d['turn_speed']),
+#         'turn_bank': get_input("Enter turn bank angle (deg, for bank turns):", d['turn_bank']),
+#         'turn_radius': get_input("Enter turn radius (m, for radius turns):", d['turn_radius']),
+#         'cruise_ceiling': get_input("Enter mission altitude (m, 0 = sea level):", d['cruise_ceiling'], allow_zero=True),
+#     }
+#     print("\n--- Performance requirements ---")
+#     inputs.update({
+#         'takeoff_distance': get_input("Enter take-off distance (m):", d['takeoff_distance']),
+#         'throw_speed': get_input("Enter hand-throw / wind speed at take-off (m/s):", d['throw_speed'], allow_zero=True),
+#         'max_speed': get_input("Enter maximum speed (m/s):", d['max_speed']),
+#         'approach_speed': get_input("Enter approach speed (m/s):", d['approach_speed']),
+#         'absolute_ceiling': get_input("Enter Absolute ceiling (m):", d['absolute_ceiling']),
+#         'rate_of_climb': get_input("Enter rate of climb (m/s):", d['rate_of_climb']),
+#         'landing': get_yes_no("Include the landing constraint (y/n)?", d['landing']),
+#     })
+#     print("\n--- Design point (0 = use the lightest feasible point) ---")
+#     inputs.update({
+#         'design_W_by_S': get_input("Enter design W/S (N/m^2):", d['design_W_by_S'], allow_zero=True),
+#         'design_P_to_W': get_input("Enter design P/W (W/N):", d['design_P_to_W'], allow_zero=True),
+#     })
+#     return inputs
+
+
+# if __name__ == "__main__":
+#     if os.path.exists(INPUTS_FILE):
+#         with open(INPUTS_FILE) as f:
+#             inputs.update(json.load(f))  # Offer the last saved answers as defaults
+#     get_interactive_inputs()
+#     with open(INPUTS_FILE, "w") as f:
+#         json.dump(inputs, f, indent=4)
+#     print(f"Saved to {INPUTS_FILE}")
+# elif os.path.exists(INPUTS_FILE):
+#     with open(INPUTS_FILE) as f:
+#         inputs.update(json.load(f))
 
 
 
-#All these assume propeller drive
-g = 9.81 #m/s2
+#Assumptions (airplane, propulsion and battery)
+assumptions = dbf.Assumptions(
+    g = 9.81, #m/s2
+    Cdo = 0.035, #Zero-lift drag coefficient
+    e = 0.868, #Oswald efficiency factor
+    np = 0.735, #Propeller efficiency
+    nm = 0.768, #Motor efficiency
+    AR = 7.3, #Aspect ratio
+    Cl_max = 1.6, #max lift coefficient
+    e_battery = dbf.specific_energy(18.5, 5.137, 0.506, usable=0.9), #J/kg, Thunderpower 5S 5000 mAh
+    We_to_Wto = 0.6, #Empty weight to take-off weight ratio
+)
 
-Mto = inputs['payload']*g*5 # Maximum takeoff weight
+#Search window for feasible points: typical DBF initial-sizing ranges
+W_by_S_min = 40 #N/m^2 (0.8 lb/ft^2)
+W_by_S_max = 85 #N/m^2 (1.8 lb/ft^2); the approach constraint may cap it lower
+P_to_W_min = 6 #W/N (12 W/lb)
+P_to_W_max = 20 #W/N (40 W/lb)
+
+#Requirements not asked for keep the DBF workbook values (see dbf.Requirements)
+requirements = dbf.Requirements(
+    Xto = inputs['takeoff_distance'],
+    Vthrow = inputs['throw_speed'],
+    V_ms = inputs['max_speed'],
+    Vapp = inputs['approach_speed'],
+    Cl_app = assumptions.Cl_max,
+    h_ceil = inputs['absolute_ceiling'],
+    ROC = inputs['rate_of_climb'],
+    landing = inputs['landing'],
+)
+
+#Mission legs in SI units; take-off is always flown, the others are skipped when 0
+leg_altitude = {"h": inputs['cruise_ceiling']} if inputs['cruise_ceiling'] > 0 else {}
+mission = [("takeoff", {})]
+if inputs['best_range_distance'] > 0:
+    mission.append(("best_cruise", {"X": inputs['best_range_distance'] * 1000, **leg_altitude}))
+if inputs['loiter_time'] > 0:
+    mission.append(("loiter", {"T": inputs['loiter_time'] * 3600, "V": inputs['loiter_speed'], **leg_altitude}))
+if inputs['Cruise_distance'] > 0:
+    mission.append(("cruise", {"X": inputs['Cruise_distance'] * 1000, "V": inputs['cruise_speed'], **leg_altitude}))
+if inputs['turns'] > 0:
+    turn_leg = {"turns": inputs['turns'], "V": inputs['turn_speed'], **leg_altitude}
+    if inputs['turn_type'] == 'performance':
+        mission.append(("turn", turn_leg))
+    elif inputs['turn_type'] == 'bank':
+        mission.append(("turn_bank", {**turn_leg, "bank": inputs['turn_bank']}))
+    elif inputs['turn_type'] == 'radius':
+        mission.append(("turn_radius", {**turn_leg, "radius": inputs['turn_radius']}))
+    else:
+        raise ValueError(f"turn_type must be 'performance', 'bank' or 'radius', not {inputs['turn_type']!r}")
 
 
-rho_sl = 1.2225 #kg/m3
+#Size the airplane at every feasible (W/S, P/W) point
+region = dbf.feasible_region(assumptions, requirements, mission, inputs['payload'], P_to_W_max,
+                             W_by_S_min=W_by_S_min, W_by_S_max=W_by_S_max, P_to_W_min=P_to_W_min)
 
-Vs = inputs['Stall_Speed'] #Stall speed-according to certification requirements
-Vmax = 1.3 * inputs['cruise_speed'] # Calculated
-Vto = 1.3 * Vs #Calculated takeoff speed
-osward = 0.8 #Oswald efficiency factor
+#Design: the chosen point if one is given, otherwise the lightest feasible airplane
+if inputs['design_W_by_S'] > 0 and inputs['design_P_to_W'] > 0:
+    design = dbf.size_point(assumptions, mission, inputs['payload'], inputs['design_W_by_S'], inputs['design_P_to_W'])
+    for problem in dbf.check_point(assumptions, requirements, design.W_by_S, design.P_to_W):
+        warnings.warn(f"design point: {problem}")
+else:
+    design = region.lightest
 
-mupto = 0.55 #propeller efficiency at takeoff
-muppac = 0.8 #propeller efficiency at cruise alt
-muroc = 0.6
 
-# Payload volume (from cuboid dimensions) and equivalent-diameter
-# Note: payload volume/radius are no longer computed here. Use
-# `compute_fuselage_from_payload(l_p, w_p, h_p, b)` to get required diameters.
+#Names the framework imports (from Sizing import *)
+g = assumptions.g
+AR = assumptions.AR
+Cdo = assumptions.Cdo
+K = assumptions.k_lift #Induced factor
+LDmax = assumptions.L_by_D_max
+
+Mto = design.Wto #Maximum takeoff weight, N
+Vmax = requirements.V_ms
+rho_sl = dbf.RHO_SL #kg/m3
+Vs = float(dbf.stall_velocity(design.W_by_S, rho_sl, assumptions.Cl_max)) #Stall speed of the design, m/s
+Vto = dbf.takeoff_velocity(Vs)
+Endurance = design.endurance / 3600 #h, from the mission legs
+
+inputs['Range'] = design.range / 1000 #km, from the mission legs
+inputs['Stall_Speed'] = Vs
+inputs['cl_max'] = assumptions.Cl_max
+inputs['service_ceiling'] = inputs['absolute_ceiling']
+
+#Payload volume from the cuboid dimensions; payload_radius is kept for branches that still use it
+inputs['payload_vol'] = inputs['payload_l'] * inputs['payload_w'] * inputs['payload_h'] #m3
+payload_radius = 2*np.cbrt((3*inputs['payload_vol'])/(4*np.pi)) #This is diameter rather
 
 
 def compute_fuselage_from_payload(l_p, w_p, h_p, b, m_p=None,
                                   K_PACK=1.15, REG_SLOPE=0.472,
                                   LAMBDA_MIN=5.0, LAMBDA_MAX=14.0,
-                                  C_NOSE=1.25, C_TAIL=2.25):
+                                  C_NOSE=1, C_TAIL=1):
     """Compute circular fuselage length and diameter driven by a cuboid payload.
 
     Follows fuselage_circular_v1_spec.md. Inputs in metres (m).
@@ -127,175 +285,33 @@ def compute_fuselage_from_payload(l_p, w_p, h_p, b, m_p=None,
         'D_ceiling': D_ceiling,
     }
 
-#long Range >15, medium 8-15 in km
-if  inputs['Range']<=100 :#short range
-    AR = 6
-    Endurance=5
 
+#Fuselage for the design's wingspan
+fuselage = compute_fuselage_from_payload(l_p=inputs['payload_l'], w_p=inputs['payload_w'],
+                                         h_p=inputs['payload_h'], b=design.b)
 
-elif 100 < inputs['Range'] <= 400 :#medium range
-    AR = 12
-    Endurance=20
-elif 400 < inputs['Range']  :#Long range
-    AR = 20
-    Endurance=25
-
-#Modelling of relaive density as a fuction of altitude, I need to check for that
-#and change all the rho_c/rho_sl
-#below 11000m
-
-if inputs['absolute_ceiling']<=11000: #m
-    T = 15.04 - 0.00649*inputs['absolute_ceiling']
-    P = 101.29 * ((T + 273.1)/288.08)**5.256
-elif 11000<inputs['absolute_ceiling']<=25000:
-    T = -56.46
-    P = 22.65 * np.exp(1.73 - 0.000157*inputs['absolute_ceiling'])
-elif inputs['absolute_ceiling']>25000:
-    T = -131.21 + 0.00299*inputs['absolute_ceiling']
-    P = 2.488 * ((T + 273.1)/216.6)**-11.388
-rho_ac = P/(0.2869 * (T + 273.1))
-
-#Cruise ceiling
-if inputs['cruise_ceiling']<=11000: #m
-    T = 15.04 - 0.00649*inputs['cruise_ceiling']
-    P = 101.29 * ((T + 273.1)/288.08)**5.256
-elif 11000<inputs['cruise_ceiling']<=25000:
-    T = -56.46
-    P = 22.65 * np.exp(1.73 - 0.000157*inputs['cruise_ceiling'])
-elif inputs['cruise_ceiling']>25000:
-    T = -131.21 + 0.00299*inputs['cruise_ceiling']
-    P = 2.488 * ((T + 273.1)/216.6)**-11.388
-rho_c = P/(0.2869 * (T + 273.1))
+rho_c = dbf.density(inputs['cruise_ceiling']) if inputs['cruise_ceiling'] > 0 else rho_sl
+rho_ac = dbf.density(inputs['absolute_ceiling'])
 
 #cruise speed to Mach number conversion
-gamma = 1.4 #ratio of specific heat, dry air
-R = 287.05 #gas constant for air, J/(kg*k)
-c = np.sqrt(gamma*R*(T + 273.1)) #speed of sound at cruise, T converted to kelvin
+c = dbf.speed_of_sound(inputs['cruise_ceiling']) #speed of sound at cruise
 cruise_mach = inputs['cruise_speed']/c #Mach number at cruise
 
-print(f"rho_c = {rho_c}")
-print(f"rho_ac = {rho_ac}")
-
-#Rate of climb at certain ceilings
-ROCAC = 0 #Rate of climb at absolute ceiling
-ROCSC = 0.5 #Rate of climb at Service ceiling
-ROCCrc = 1.5 #Rate of climb at cruise ceiling
-
-Sto = 500 #launch unit length in m
-K = 0.398/AR #Induced factor
-Cdo = 0.0245
-Cdoto = 0.0835 #Takeoff zero lift Drag coefficient gotten from literature
-Clto = 0.85 #Lift coefficient at Takeoff off
-Cdto = 0.0835 + K * 0.7225 #drag coefficient in take off config
-Clr = Clto
-mu = 0.08 # runway friction coefficient
-Cdg = Cdto - mu*Clto
-
-
-
-
-
-
-#plotting
-fig, ax = plt.subplots()
-
-
-#Wing_loding at v stall
-Wing_Loading_Stall = 0.5 * rho_sl * Vs**2*inputs['cl_max']
-#plt.plot([Wing_Loading_Stall, Wing_Loading_Stall],[-0.5, 2] ,color='r', label='Stall speed')
-
-
-
-epsilon = 1e-9
-# Wing Power loading at Vmax calc
-Wing_loading = np.linspace(1,1.2*Wing_Loading_Stall,500)
-Power_loading_maxspeed = ((muppac)*(rho_c/rho_sl))/(((0.5 * rho_sl * Vmax**3*Cdo)/(Wing_loading)) + ((2*K*Wing_loading)/(rho_c*Vmax)))
-plt.plot(Wing_loading, Power_loading_maxspeed, color='g',linestyle= '--', label='Vmax')
-print( f"min:{min(Power_loading_maxspeed)}, max:{max(Power_loading_maxspeed)}")
-
-#Takeoff
-Power_loading_takeoff = ((1-np.exp((0.6*rho_sl*g*Cdg*Sto)/Wing_loading))/(mu - (mu + Cdg/Clr)*(np.exp((0.6*rho_sl*g*Cdg*Sto)/Wing_loading))))*(mupto/Vto)
-plt.plot(Wing_loading, Power_loading_takeoff, color='b',linestyle = '--', label='WPto')
-
-
-#Rate of climb
-#from EASA CS VLA 65 we take ROC to be 2 m/s
-LDmax = 1/(2*np.sqrt(Cdo*K))#Gotten from a text book
-ROC = 2 #m/s
-Power_loading_ROC = 1/((ROC/muroc) + np.sqrt((2/(rho_sl*np.sqrt(3*Cdo/K)))*Wing_loading)*(1.155/(LDmax*muroc)))
-plt.plot(Wing_loading, Power_loading_ROC, color='gold',linestyle = '--', label='WPROC')
-
-#Ceiling/ rho @ cruise ceiling alt
-Power_loading_Ceil = (rho_c/rho_sl)/(ROCCrc/muppac + (np.sqrt((2/(rho_c*np.sqrt(3*Cdo/K)))*Wing_loading)*(1.155/(LDmax*muppac))))
-plt.plot(Wing_loading, Power_loading_Ceil, color='cyan',linestyle = '--',  label='WPCeil')
-
-
-
-# Compute upper boundary (minimum of all Power_loading curves)
-min_power_loading = np.minimum.reduce([Power_loading_maxspeed, Power_loading_takeoff, Power_loading_ROC, Power_loading_Ceil]) #Get the minimum plot
-# Mask for feasible x (x >= Wing_Loading_Stall)
-mask_x = Wing_loading <= Wing_Loading_Stall #Getting wing loading values less than stall
-feasible_x = Wing_loading[mask_x] #Generate x arrays from it
-feasible_y_upper = min_power_loading[mask_x] #Generate corresponding y values using the lowest plot
-
-# Generate grid of points and check feasibility
-x_grid, y_grid = np.meshgrid(
-    np.linspace(feasible_x.min(), feasible_x.max(), 100),
-    np.linspace(0, feasible_y_upper.max(), 100) #create a grid out it
-)
-f_upper = interp1d(feasible_x, feasible_y_upper, bounds_error=False, fill_value=np.inf) #FInd new upper limits on the lowest plot
-mask = (x_grid <= Wing_Loading_Stall) & (y_grid <= f_upper(x_grid))
-# Extract feasible points
-feasible_points = np.column_stack((x_grid[mask], y_grid[mask]))
-
-
-df = pd.DataFrame(feasible_points, columns=['wing_loading', 'Power_loading'])
-df.to_csv("feasible_points.csv", index=False)
-
-A = feasible_points[-2000:]
-
-B  = (Mto)/A
-#print(B)
-
-Wl_min = np.min(B[:,0])
-Wl_max = np.max(B[:,0])
-Wing_Area = [1.2*float(Wl_min),float(Wl_max)] #TO move it away from the stall speed
-print(f"Wing_Area: {Wing_Area}")
-Wing_span =  np.sqrt(AR*np.array(Wing_Area))#Design Variable
-print(f"Wing_span: {Wing_span}")
-
-Pl_min = np.min(B[:,1])
-Pl_max = np.max(B[:,1])
-Eng_pow = [float(Pl_min),float(Pl_max)]
-print(f"Eng_pow: {Eng_pow}")
-
-ax.set_xlim(1,1.5*Wing_Loading_Stall)
-ax.set_ylim(0, 20*np.max(feasible_points[:,1]))
-plt.xlabel("W/S, N/m^2")
-plt.ylabel("W/P, N/W")
-plt.title("Constraint Plot")
-plt.plot([Wing_Loading_Stall, Wing_Loading_Stall],[0, 20*np.max(feasible_points[:,1])] ,color='r', linestyle = '--', label='Stall speed')
-
-plt.scatter(feasible_points[:,0], feasible_points[:,1], color='red', s=2, label='Feasible Region')
-plt.legend()
-#plt.show()
+#Design-variable bounds from the feasible region
+feasible_points = np.column_stack((region.W_by_S, region.P_to_W)) #W/S (N/m^2), P/W (W/N)
+Wing_Area = list(region.bounds('S')) #m^2
+Wing_span = np.sqrt(AR*np.array(Wing_Area)) #Design Variable
+Eng_pow = list(region.bounds('Power')) #W, battery power
 
 
 def compute_cl_cruise(wing_area=None):
     """Compute CL required for steady level cruise.
 
-    If `wing_area` is None, use the Wing_Area value computed earlier
-    (line ~262). `Wing_Area` is typically a two-element list [low, high];
-    in that case this function uses the lower bound (index 0) by default.
+    If `wing_area` is None, use the design's wing area (design.S), which goes
+    with Mto. (The framework's version used Wing_Area[0], the smallest wing in
+    the feasible region, which belongs to a different airplane here.)
     """
-    global Wing_Area
-    if wing_area is None:
-        if isinstance(Wing_Area, (list, tuple, np.ndarray)):
-            S = float(Wing_Area[0])
-        else:
-            S = float(Wing_Area)
-    else:
-        S = float(wing_area)
+    S = float(design.S) if wing_area is None else float(wing_area)
 
     W = float(Mto)  # Mto already in Newtons in this module
     rho = float(rho_c)
@@ -306,5 +322,34 @@ def compute_cl_cruise(wing_area=None):
     return cl_cruise
 
 
+if __name__ == "__main__":
+    print(f"\nrho_c = {rho_c}")
+    print(f"rho_ac = {rho_ac}")
+    lightest = region.lightest
+    if design is lightest:
+        print(f"\nLightest feasible design:\n{design}")
+    else:
+        print(f"\nChosen design point:\n{design}")
+        print(f"\nLightest feasible point: W/S = {lightest.W_by_S:.3f} N/m^2, P/W = {lightest.P_to_W:.3f} W/N, "
+              f"Wto = {lightest.Wto:.4f} N")
+    print(f"\nTake-off weight range: {region.bounds('Wto')} N")
+    print(f"Wing_Area: {Wing_Area}")
+    print(f"Wing_span: {Wing_span}")
+    print(f"Eng_pow: {Eng_pow}")
+    print(f"Endurance: {Endurance:.3f} h, Range: {inputs['Range']:.3f} km, cruise Mach: {cruise_mach:.4f}")
+    print(f"CL at cruise: {compute_cl_cruise():.4f}")
+    print(f"\nFuselage for b = {design.b:.3f} m: L_f = {fuselage['L_f']:.3f} m, D = {fuselage['D']:.3f} m "
+          f"(D_req = {fuselage['D_req']:.3f}, allowed {fuselage['D_floor']:.3f}-{fuselage['D_ceiling']:.3f}), "
+          f"slenderness {fuselage['lambda_ach']:.2f}")
+    print(f"Payload fits: cross-section {fuselage['fit_xsec']}, length {fuselage['fit_len']}")
 
+    df = pd.DataFrame(feasible_points, columns=['wing_loading', 'Power_loading'])
+    df.to_csv("feasible_points.csv", index=False)
 
+    #plotting
+    curves = dbf.compute_constraints(assumptions, requirements)
+    W_by_S_app = dbf.approach_constraint(assumptions, requirements)
+    ax = dbf.plot_constraints(curves, region=region, design_point=(design.W_by_S, design.P_to_W),
+                              axis=(0, 1.3 * W_by_S_app, 0, P_to_W_max))
+    ax.set_title("Constraint Plot")
+    plt.show()

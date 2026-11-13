@@ -14,6 +14,17 @@ if os.path.exists(VSPAERO_PATH):
 else:
     print(f"WARNING: VSPAero path not found: {VSPAERO_PATH}")
 
+MU_AIR = 1.789e-5  # Pa*s, dynamic viscosity of air (sea-level standard; varies <1% up to 120 m)
+
+
+def main_wing_id():
+    """Largest wing geom in the loaded model (the main wing, not the tails)."""
+    wings = [g for g in vsp.FindGeoms() if vsp.GetGeomTypeName(g) == "Wing"]
+    if not wings:
+        raise RuntimeError("No wing geometry found for the reference area")
+    return max(wings, key=lambda g: vsp.GetParmVal(g, "TotalArea", "WingGeom"))
+
+
 class Aero:
     def __init__(self,path = "", Engine_Power=20,xcg=1):
         self.path = path
@@ -105,12 +116,21 @@ class Aero:
         # Reference geometry and freestream conditions
         # Do NOT override GeomSet — the default matches what ComputeGeometry used.
 
+        # Reference area, chord and span from the main wing (the default is a manual Sref = 100, cref = bref = 1)
+        wing = main_wing_id()
+        vsp.SetIntAnalysisInput(analysis_name, "RefFlag", [vsp.COMPONENT_REF])
+        vsp.SetStringAnalysisInput(analysis_name, "WingID", [wing])
+        # Cruise Reynolds number on the wing's mean geometric chord (S/b)
+        c_ref = vsp.GetParmVal(wing, "TotalArea", "WingGeom") / vsp.GetParmVal(wing, "TotalSpan", "WingGeom")
+        Re_cruise = float(rho_c) * float(inputs['cruise_speed']) * c_ref / MU_AIR
+        print(f"Reference wing {wing}: c_ref = {c_ref:.4f} m, Re = {Re_cruise:.3e}")
+
         vsp.SetDoubleAnalysisInput(analysis_name, "MachStart", [cruise_mach])
         vsp.SetIntAnalysisInput(analysis_name, "MachNpts", [1])
         vsp.SetDoubleAnalysisInput(analysis_name, "AlphaStart", [-6.0])
         vsp.SetDoubleAnalysisInput(analysis_name, "AlphaEnd", [10.0])
         vsp.SetIntAnalysisInput(analysis_name, "AlphaNpts", [7])  # Number of alpha points
-        vsp.SetDoubleAnalysisInput(analysis_name, "ReCref", [5.8e6])  # Reynolds number
+        vsp.SetDoubleAnalysisInput(analysis_name, "ReCref", [Re_cruise])  # Reynolds number at cruise
         vsp.SetIntAnalysisInput(analysis_name, "NumWakeNodes", [32])
         vsp.SetIntAnalysisInput(analysis_name, "WakeNumIter", [5])
         vsp.SetDoubleAnalysisInput(analysis_name, "Xcg", [self.xcg])
@@ -247,8 +267,9 @@ class Aero:
         vsp.SetIntAnalysisInput(analysis_name, "VelocityUnit", [1])
         vsp.SetIntAnalysisInput(analysis_name, "AltLengthUnit", [1])
         vsp.SetIntAnalysisInput(analysis_name, "GeomSet", [0])
-        vsp.SetIntAnalysisInput(analysis_name, "RefFlag", [0])
-        vsp.SetDoubleAnalysisInput(analysis_name, "Sref", [100.0])
+        # Same reference as VSPAero (main wing), so cd0_total and CDi add on one area
+        vsp.SetIntAnalysisInput(analysis_name, "RefFlag", [vsp.COMPONENT_REF])
+        vsp.SetStringAnalysisInput(analysis_name, "WingID", [main_wing_id()])
 
         cruise_ceiling = float(inputs.get("cruise_ceiling", 0.0))
         cruise_speed = float(inputs.get("cruise_speed", 0.0))

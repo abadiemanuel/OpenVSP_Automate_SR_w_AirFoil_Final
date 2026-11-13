@@ -50,34 +50,16 @@ Span=tuple(Wing_span)#Design Variable
 power = tuple(Eng_pow)
 print(Span)
 print(power)
-Fuse_length = 0.47*Wing_span #Fuselage length model
-cg = 0.33*np.average(Fuse_length) #from mohammed 32% to 49%
-Fuse_b_avg = float(np.average(Wing_span))
-# Compute required diameter from payload + representative wingspan (use average wingspan)
-fus_req = compute_fuselage_from_payload(l_p=float(inputs.get('payload_l', 1.0)),
-                                       w_p=float(inputs.get('payload_w', 1.0)),
-                                       h_p=float(inputs.get('payload_h', 1.0)),
-                                       b=Fuse_b_avg)
-D_req = fus_req['D_req']
-D_max = fus_req['D_ceiling']
-
-# Set fuselage station bounds relative to required diameter
-Fuselage_Width_0 = (0.333 * D_req, 0.5 * D_req)
-Fuselage_Height_0 = (0.333 * D_req, 0.5 * D_req)
-Fuselage_Width_1 = (D_req, D_req)
-Fuselage_Height_1 = (D_req, D_req)
-Fuselage_Width_2 = (D_req, D_req)
-Fuselage_Height_2 = (D_req, D_req)
-Fuselage_Width_3 = (D_req, D_req)
-Fuselage_Height_3 = (D_req, D_req)
-Fuselage_Width_4 = (0.333 * D_req, 0.8 * D_req)
-Fuselage_Height_4 = (0.333 * D_req, 0.8 * D_req)
+# Fuselage: the length, station positions and diameters come from fuselage_tail_buildup (Sizing.py).
+# The optimizer only shapes the body: nose size (r_nose), aft diameter (r_aft = D_aft/D: 1 tube, small boom)
+# and how much of the aft body tapers (f_taper: ~1 conventional cone, small = short transition then boom).
+D_bay = payload_bay_diameter()
+r_aft_min = min(fuselage_assumptions['D_aft_min'] / D_bay, 1.0)
 mixed_vars = {
-    "Wing_Span": Real(bounds = (Span)), "Power": Real(bounds = (power)),"Taper": Real(bounds = (0.3,1)),"Sweep": Real(bounds = (0, 20)),"Vol_Hor": Real(bounds = (0.7,1.1)),"Vol_Vert": Real(bounds = (0.02, 0.1)),
-    "Fuselage_Length": Real(bounds=(Fuse_length)),"Fuselage_Width_0": Real(bounds=(Fuselage_Width_0)),"Fuselage_Height_0": Real(bounds=(Fuselage_Height_0)),"Fuselage_Width_1": Real(bounds=(Fuselage_Width_1)),"Fuselage_Height_1": Real(bounds=(Fuselage_Height_1)),
-    "Fuselage_Width_2": Real(bounds=(Fuselage_Width_2)),"Fuselage_Height_2": Real(bounds=(Fuselage_Height_2)),"Fuselage_Height_3": Real(bounds=(Fuselage_Height_3)),"Fuselage_Width_3": Real(bounds=(Fuselage_Width_3)),"Fuselage_Height_4": Real(bounds=(Fuselage_Height_4)),
-    "Fuselage_Width_4": Real(bounds=(Fuselage_Width_4)),"toptan_0": Real(bounds=(40,120)),"toptan_1": Real(bounds=(40,120)),"toptan_2": Real(bounds=(40,120)),"toptan_3": Real(bounds=(40,120)),"toptan_4": Real(bounds=(40,120)),
-    "bottan_0": Real(bounds=(40,120)),"bottan_1": Real(bounds=(40,120)),"bottan_2": Real(bounds=(40,120)),"bottan_3": Real(bounds=(40,120)),"bottan_4": Real(bounds=(40,120)),"topstr_0": Real(bounds=(0.5, 1.83)),"topstr_1": Real(bounds=(0.5, 1.83)),
+    "Wing_Span": Real(bounds = (Span)), "Power": Real(bounds = (power)),"Taper": Real(bounds = (0.3,1)),"Sweep": Real(bounds = (0, 20)),"Vol_Hor": Real(bounds = (0.35,0.6)),"Vol_Vert": Real(bounds = (0.02, 0.1)),
+    "r_nose": Real(bounds=(0.333, 0.5)),"r_aft": Real(bounds=(r_aft_min, 1.0)),"f_taper": Real(bounds=(0.2, 0.5)),
+    "toptan_0": Real(bounds=(40,120)),"toptan_1": Real(bounds=(40,120)),"toptan_2": Real(bounds=(40,120)),"toptan_3": Real(bounds=(40,120)),"toptan_4": Real(bounds=(0,10)),
+    "bottan_0": Real(bounds=(40,120)),"bottan_1": Real(bounds=(40,120)),"bottan_2": Real(bounds=(40,120)),"bottan_3": Real(bounds=(40,120)),"bottan_4": Real(bounds=(0,10)),"topstr_0": Real(bounds=(0.5, 1.83)),"topstr_1": Real(bounds=(0.5, 1.83)),
     "topstr_2": Real(bounds=(0.5, 1.83)),"topstr_3": Real(bounds=(0.5, 1.83)),"topstr_4": Real(bounds=(0.5, 1.83)),"botstr_0": Real(bounds=(0.5, 1.83)),
     "botstr_1": Real(bounds=(0.5, 1.83)),"botstr_2": Real(bounds=(0.5, 1.83)),"botstr_3": Real(bounds=(0.5, 1.83)),"botstr_4": Real(bounds=(0.5, 1.83)),
 
@@ -253,25 +235,14 @@ class Genetic(Problem):
 
         n_candidates = temp_df.shape[0]
 
-        # Fast fuselage feasibility pre-check (hard-reject infeasible candidates)
-        # Uses compute_fuselage_from_payload from Sizing.py. If payload dims are not
-        # provided as columns, fall back to a cubic bounding box derived from global inputs.
+        # Fast fuselage/tail feasibility pre-check (hard-reject infeasible candidates)
+        # Same buildup Master_Controller_2 uses to build the geometry (Sizing.fuselage_tail_buildup).
         reject_indices = set()
         for i in range(n_candidates):
-            row = temp_df.iloc[i]
-            b_val = float(row.get('Wing_Span', 0.0))
-            # Try to read explicit payload dims if provided
-            l_p = row.get('Payload_L', None)
-            w_p = row.get('Payload_W', None)
-            h_p = row.get('Payload_H', None)
-            if l_p is None or w_p is None or h_p is None:
-                # fallback: use explicit payload dims from Sizing.inputs if available
-                l_p = l_p or float(inputs.get('payload_l', 1.0))
-                w_p = w_p or float(inputs.get('payload_w', 1.0))
-                h_p = h_p or float(inputs.get('payload_h', 1.0))
-
-            fus = compute_fuselage_from_payload(l_p=float(l_p), w_p=float(w_p), h_p=float(h_p), b=float(b_val))
-            if not fus['fit_xsec'] or not fus['fit_len']:
+            geo = design_geometry(temp_df.iloc[i])
+            problems = check_fuselage(geo, float(temp_df.iloc[i]['Wing_Span']))
+            if problems:
+                print(f"    Design {i+1}/{n_candidates} fuselage infeasible: {'; '.join(problems)}")
                 reject_indices.add(i)
 
         # ── Phase 1: Sequential geometry creation ──────────────────────
@@ -286,7 +257,7 @@ class Genetic(Problem):
             self.candidate_counter += 1
             # Skip geometry creation for candidates pre-rejected by fuselage feasibility
             if i in reject_indices:
-                print(f"    Design {i+1}/{n_candidates} SKIPPED: fuselage packaging infeasible (hard reject)")
+                print(f"    Design {i+1}/{n_candidates} SKIPPED: fuselage/tail buildup infeasible (hard reject)")
                 geometry_errors.add(i)
                 continue
             try:
@@ -306,7 +277,9 @@ class Genetic(Problem):
                     wing_area_pf = (wing_span_val ** 2) / AR
                 except Exception:
                     wing_area_pf = float(design_row["Wing_Span"].iloc[0])
-                vsp_jobs[i] = (vsp_file_abs, engine_power, design_row, wing_area_pf)
+                # CG at the wing quarter-MAC over the payload-bay centre (per design, nose at x = 0)
+                cg_val = design_geometry(temp_df.iloc[i])['x_ac']
+                vsp_jobs[i] = (vsp_file_abs, engine_power, design_row, wing_area_pf, cg_val)
             except Exception as e:
                 print(f"    Geometry {i+1}/{n_candidates} FAILED: {type(e).__name__}: {str(e)[:150]}")
                 geometry_errors.add(i)
@@ -323,9 +296,9 @@ class Genetic(Problem):
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=N_PARALLEL_WORKERS) as executor:
             futures = {}
-            for i, (vsp_file_abs, engine_power, _, wing_area_pf) in vsp_jobs.items():
+            for i, (vsp_file_abs, engine_power, _, wing_area_pf, cg_val) in vsp_jobs.items():
                 future = executor.submit(
-                    self._run_worker, i, vsp_file_abs, engine_power, cg, wing_area_pf)
+                    self._run_worker, i, vsp_file_abs, engine_power, cg_val, wing_area_pf)
                 futures[future] = i
 
             for future in concurrent.futures.as_completed(futures):
@@ -423,13 +396,13 @@ class Genetic(Problem):
 problem = Genetic()
 
 algorithm = NSGA2(
-    pop_size=1,
+    pop_size=50,
     sampling=MixedVariableSampling(),
     mating=MixedVariableMating(eliminate_duplicates= MixedVariableDuplicateElimination()),
     eliminate_duplicates=False
 )
 
-n_gen = 1
+n_gen = 50
 
 start = time.time()
 res = minimize(

@@ -224,7 +224,7 @@ if all_gens_df is not None and "Generation" in all_gens_df.columns:
         # --- 6a. Key parameter evolution (mean ± std per generation) ---
         # Select the most design-relevant parameters for a focused plot
         key_params = ["Wing_Span", "Power", "Taper", "Sweep", "Vol_Hor", "Vol_Vert",
-                      "Fuselage_Length"]
+                      "r_aft", "f_taper"]
         key_params = [p for p in key_params if p in numeric_params]
 
         if key_params:

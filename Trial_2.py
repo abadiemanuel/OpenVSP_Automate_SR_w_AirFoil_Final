@@ -26,10 +26,11 @@ class Fuselage:
                  botangle_0=90, botangle_1=90, botangle_2=90, botangle_3=90, botangle_4=90, topstr_0=0.5, topstr_1=0.5,
                  topstr_2=0.5, topstr_3=0.5, topstr_4=0.5,
                  botstr_0=0.5, botstr_1=0.5, botstr_2=0.5, botstr_3=0.5, botstr_4=0.5,
-
+                 xloc_percent=None,
                  ):  # Setting default values
 
         self.length = length
+        self.xloc_percent = xloc_percent  # station positions as fractions of length (None = OpenVSP defaults)
         self.Xloc = Xloc
         self.Yloc = Yloc
         self.Zloc = Zloc
@@ -164,6 +165,16 @@ class Fuselage:
 
 
             # Collection of variables for modification/Skinning
+
+        # Station positions along the body. OpenVSP keeps each interior station between its
+        # neighbours, so sweep forwards and backwards until every station reaches its target.
+        if self.xloc_percent is not None:
+            interior = range(1, min(num_xsec_order, len(self.xloc_percent)) - 1)
+            for _ in range(3):
+                for i in list(interior) + list(reversed(interior)):
+                    vsp.SetParmVal(vsp.GetXSecParm(vsp.GetXSec(xsec_surf, i), "XLocPercent"),
+                                   float(self.xloc_percent[i]))
+                vsp.Update()
 
         vsp.Update()
 

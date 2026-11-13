@@ -3,7 +3,7 @@ Initial sizing with the DBF electric-aircraft method (DBF_Sizing.py).
 
 Drop-in replacement for the framework's Sizing.py: it exports the same names
 (inputs, g, Mto, Vmax, Endurance, AR, payload_radius, cruise_mach, Wing_Area,
-Wing_span, Eng_pow, compute_fuselage_from_payload, compute_cl_cruise, ...), so
+Wing_span, Eng_pow, compute_cl_cruise, ...), so
 `from Sizing import *` keeps working.
 
 Run it on its own (python Sizing.py) to enter the mission and requirements.
@@ -241,54 +241,167 @@ inputs['payload_vol'] = inputs['payload_l'] * inputs['payload_w'] * inputs['payl
 payload_radius = 2*np.cbrt((3*inputs['payload_vol'])/(4*np.pi)) #This is diameter rather
 
 
-def compute_fuselage_from_payload(l_p, w_p, h_p, b, m_p=None,
-                                  K_PACK=1.15, REG_SLOPE=0.472,
-                                  LAMBDA_MIN=5.0, LAMBDA_MAX=14.0,
-                                  C_NOSE=1, C_TAIL=1):
-    """Compute circular fuselage length and diameter driven by a cuboid payload.
+#Fuselage and tail buildup assumptions (red in the workflow sketch)
+fuselage_assumptions = {
+    'K_PACK': 1.15, #payload packing factor (bay = 1.15 x payload box)
+    'C_NOSE': 1.25, #nose length / bay diameter
+    'K_c': 1.0, #Sadraey tail-arm correction (1.0-1.4); 1.0 matches APPA
+    'AR_h': 4.0, #horizontal tail aspect ratio (b_h^2/S_h)
+    'TR_h': 0.5, #horizontal tail taper ratio
+    'AR_v': 1.5, #vertical tail aspect ratio (h_v^2/S_v)
+    'TR_v': 0.6, #vertical tail taper ratio
+    'L_by_b_max': 0.87, #longest fuselage in the DBF database, L_f/b
+    'taper_angle_max': 15.0, #deg, aft-body half-angle before the flow separates
+    'D_aft_min': 0.02, #m, thinnest boom (APPA used a 19.8 mm tube)
+}
 
-    Follows fuselage_circular_v1_spec.md. Inputs in metres (m).
-    Returns dict with keys: L_f, D, lambda_ach, fit_xsec, fit_len, D_req, D_floor, D_ceiling
+#Tail leading-edge sweep (H, V) per tail type, deg; Master_Controller_2 builds the tails with these
+TAIL_SWEEP = {
+    "Conventional": (11.8, 0.0), "T-Tail": (11.8, 0.0), "Cruciform": (11.8, 0.0),
+    "Y-Tail": (21.8, 21.8), "Inverted_Y-Tail": (21.8, 21.8), "Dual-Tail": (15.0, 21.8),
+    "V-Tail": (21.8, None), "Inverted_V-Tail": (21.8, None), #V-tails have no separate fin
+}
+
+
+def wing_mac(b, S, taper):
+    """Root chord, mean aerodynamic chord and its spanwise station of a trapezoidal wing (b is the full span)."""
+    c_r = 2 * S / (b * (1 + taper))
+    c_bar = (2 / 3) * c_r * (1 + taper + taper**2) / (1 + taper)
+    y_bar = (b / 6) * (1 + 2 * taper) / (1 + taper)
+    return c_r, c_bar, y_bar
+
+
+def _surface_le(x_ac, span, S_surf, taper, sweep_deg, half=False):
+    """Root leading edge that puts a trapezoidal surface's quarter-MAC at x_ac.
+
+    span is the full (mirrored) span, or the panel height when half=True (single fin).
     """
-    # 1. Package the box
-    w_bay = K_PACK * w_p
-    h_bay = K_PACK * h_p
+    b_eff = 2 * span if half else span
+    c_r, c_bar, y_bar = wing_mac(b_eff, 2 * S_surf if half else S_surf, taper)
+    x_le = x_ac - 0.25 * c_bar - y_bar * math.tan(math.radians(sweep_deg))
+    return x_le, c_r, c_bar
 
-    # 2. Length from regression
-    L_f = REG_SLOPE * b
 
-    # 3. Required diameter to enclose boxed (diagonal)
-    D_req = math.sqrt(w_bay ** 2 + h_bay ** 2)
+def fuselage_tail_buildup(l_p, w_p, h_p, b, S, taper, sweep, V_h, V_v,
+                          r_aft=1.0, f_taper=0.9, r_nose=0.4, tail_type="Conventional",
+                          K_c=None, assumptions=None):
+    """Single fuselage body and tail sized from the payload, the wing and the tail volume coefficients.
 
-    # 4. Slenderness band on diameter for this length
-    D_floor = L_f / LAMBDA_MAX
-    D_ceiling = L_f / LAMBDA_MIN
+    Body stations (OpenVSP XSecs 0-4): nose tip -> bay start -> bay end -> taper end -> tail end.
+      Bay diameter D encloses the packed payload; the body tapers to D_aft = r_aft*D over
+      f_taper of the length behind the bay (r_aft 1 = tube, small = boom).
+    Wing: quarter-MAC over the payload-bay centre (the CG sits there).
+    Tail arm: Sadraey optimum l_opt = K_c*sqrt(4*c*S*V_h/(pi*D_f)), D_f = mean body diameter over the arm
+      (iterated, since the arm sets how much of the thin aft body it spans).
+    Tails: S_h = V_h*S*c/l_opt, S_v = V_v*S*b/l_opt; the body ends at the last tail root trailing edge.
+    Lengths in m, areas in m^2, angles in deg.
+    """
+    p = dict(fuselage_assumptions, **(assumptions or {}))
+    K_c = p['K_c'] if K_c is None else K_c
+    H_sweep, V_sweep = TAIL_SWEEP.get(tail_type, (0.0, 0.0))
 
-    # 5. Diameter (deterministic — drag drives to the floor, but must enclose payload)
-    D = max(D_floor, D_req)
+    #1. Payload bay and nose
+    D = math.sqrt((p['K_PACK'] * w_p) ** 2 + (p['K_PACK'] * h_p) ** 2)
+    D_aft = r_aft * D
+    l_nose = p['C_NOSE'] * D
+    x_bay_end = l_nose + p['K_PACK'] * l_p
 
-    # 6. Feasibility flags
-    fit_xsec = (D_req <= D_ceiling)
-    fit_len = (l_p <= L_f - (C_NOSE + C_TAIL) * D)
+    #2. Wing: MAC quarter-chord over the bay centre
+    c_r, c_bar, y_bar = wing_mac(b, S, taper)
+    x_ac = l_nose + p['K_PACK'] * l_p / 2
+    x_wing_LE = x_ac - 0.25 * c_bar - y_bar * math.tan(math.radians(sweep))
 
-    # 7. Achieved slenderness
-    lambda_ach = L_f / D if D > 0 else float('inf')
+    def tails(l_t):
+        S_h = V_h * S * c_bar / l_t
+        b_h = math.sqrt(p['AR_h'] * S_h)
+        x_h_LE, c_h_root, c_h_bar = _surface_le(x_ac + l_t, b_h, S_h, p['TR_h'], H_sweep)
+        ends = [x_h_LE + c_h_root]
+        S_v = V_v * S * b / l_t
+        h_v = math.sqrt(p['AR_v'] * S_v)
+        x_v_LE, c_v_root, _ = _surface_le(x_ac + l_t, h_v, S_v, p['TR_v'], V_sweep or 0.0, half=True)
+        if V_sweep is not None:
+            ends.append(x_v_LE + c_v_root)
+        return dict(S_h=S_h, b_h=b_h, c_h_root=c_h_root, c_h_tip=p['TR_h'] * c_h_root, c_h_bar=c_h_bar,
+                    x_h_LE=x_h_LE, S_v=S_v, h_v=h_v, c_v_root=c_v_root, c_v_tip=p['TR_v'] * c_v_root,
+                    x_v_LE=x_v_LE, L_f=max(ends))
+
+    def stations(L_f):
+        x_taper_end = x_bay_end + f_taper * (L_f - x_bay_end)
+        return [0.0, l_nose, x_bay_end, x_taper_end, L_f], [r_nose * D, D, D, D_aft, D_aft]
+
+    #3. Optimum tail arm with the mean body diameter over the arm (damped fixed-point iteration)
+    l_t = K_c * math.sqrt(4 * c_bar * S * V_h / (math.pi * D))
+    for _ in range(200):
+        xs, ds = stations(tails(l_t)['L_f'])
+        D_f = float(np.mean(np.interp(np.linspace(x_ac, x_ac + l_t, 200), xs, ds)))
+        l_new = K_c * math.sqrt(4 * c_bar * S * V_h / (math.pi * D_f))
+        if abs(l_new - l_t) < 1e-6:
+            l_t = l_new
+            break
+        l_t = 0.5 * (l_t + l_new)
+
+    #4-5. Tails and body stations for the converged arm
+    t = tails(l_t)
+    L_f = t['L_f']
+    xs, ds = stations(L_f)
+    taper_len = xs[3] - xs[2]
+    if D_aft >= D:
+        half_angle = 0.0
+    elif taper_len > 0:
+        half_angle = math.degrees(math.atan((D - D_aft) / 2 / taper_len))
+    else:
+        half_angle = 90.0
 
     return {
-        'L_f': L_f,
-        'D': D,
-        'lambda_ach': lambda_ach,
-        'fit_xsec': fit_xsec,
-        'fit_len': fit_len,
-        'D_req': D_req,
-        'D_floor': D_floor,
-        'D_ceiling': D_ceiling,
+        'D': D, 'D_aft': D_aft, 'D_f': D_f, 'L_f': L_f, 'L_f_by_b': L_f / b,
+        'l_t': l_t, 'l_t_by_c': l_t / c_bar, 'x_ac': x_ac,
+        'wing_root': c_r, 'wing_tip': taper * c_r, 'c_bar': c_bar, 'x_wing_LE': x_wing_LE,
+        'x_tail_ac': x_ac + l_t, 'D_at_tail': float(np.interp(x_ac + l_t, xs, ds)),
+        'x_bay_end': x_bay_end, 'taper_half_angle': half_angle,
+        'XLocPercent': [x / L_f for x in xs], 'diameters': ds,
+        **{k: v for k, v in t.items() if k != 'L_f'},
     }
 
 
-#Fuselage for the design's wingspan
-fuselage = compute_fuselage_from_payload(l_p=inputs['payload_l'], w_p=inputs['payload_w'],
-                                         h_p=inputs['payload_h'], b=design.b)
+def check_fuselage(geo, b, assumptions=None):
+    """Reasons the fuselage/tail buildup is infeasible (empty list if it is fine)."""
+    p = dict(fuselage_assumptions, **(assumptions or {}))
+    problems = []
+    if geo['L_f'] / b > p['L_by_b_max']:
+        problems.append(f"L_f/b = {geo['L_f'] / b:.2f} > {p['L_by_b_max']}")
+    if geo['taper_half_angle'] > p['taper_angle_max']:
+        problems.append(f"aft taper {geo['taper_half_angle']:.1f} deg > {p['taper_angle_max']} deg")
+    if geo['D_aft'] < p['D_aft_min'] - 1e-9:
+        problems.append(f"D_aft = {geo['D_aft']:.3f} m < {p['D_aft_min']} m")
+    if geo['x_wing_LE'] < 0:
+        problems.append("wing leading edge ahead of the nose")
+    if geo['x_h_LE'] < geo['x_bay_end']:
+        problems.append("tail overlaps the payload bay")
+    return problems
+
+
+def payload_bay_diameter(l_p=None, w_p=None, h_p=None, assumptions=None):
+    """Bay diameter D that encloses the packed payload box."""
+    p = dict(fuselage_assumptions, **(assumptions or {}))
+    w_p = inputs['payload_w'] if w_p is None else w_p
+    h_p = inputs['payload_h'] if h_p is None else h_p
+    return math.sqrt((p['K_PACK'] * w_p) ** 2 + (p['K_PACK'] * h_p) ** 2)
+
+
+def design_geometry(row):
+    """Fuselage/tail buildup for one optimizer candidate (a population row); S = b^2/AR as in the framework."""
+    b = float(row['Wing_Span'])
+    return fuselage_tail_buildup(
+        l_p=inputs['payload_l'], w_p=inputs['payload_w'], h_p=inputs['payload_h'],
+        b=b, S=b**2 / AR, taper=float(row['Taper']), sweep=float(row['Sweep']),
+        V_h=float(row['Vol_Hor']), V_v=float(row['Vol_Vert']),
+        r_aft=float(row['r_aft']), f_taper=float(row['f_taper']), r_nose=float(row['r_nose']),
+        tail_type=row['Tail_Type'])
+
+
+#Fuselage and tail for the sizing design point (straight tube, V_h 0.45, V_v 0.03, untapered wing), for reference
+fuselage = fuselage_tail_buildup(l_p=inputs['payload_l'], w_p=inputs['payload_w'], h_p=inputs['payload_h'],
+                                 b=design.b, S=design.S, taper=1.0, sweep=0.0, V_h=0.45, V_v=0.03)
 
 rho_c = dbf.density(inputs['cruise_ceiling']) if inputs['cruise_ceiling'] > 0 else rho_sl
 rho_ac = dbf.density(inputs['absolute_ceiling'])
@@ -338,10 +451,10 @@ if __name__ == "__main__":
     print(f"Eng_pow: {Eng_pow}")
     print(f"Endurance: {Endurance:.3f} h, Range: {inputs['Range']:.3f} km, cruise Mach: {cruise_mach:.4f}")
     print(f"CL at cruise: {compute_cl_cruise():.4f}")
-    print(f"\nFuselage for b = {design.b:.3f} m: L_f = {fuselage['L_f']:.3f} m, D = {fuselage['D']:.3f} m "
-          f"(D_req = {fuselage['D_req']:.3f}, allowed {fuselage['D_floor']:.3f}-{fuselage['D_ceiling']:.3f}), "
-          f"slenderness {fuselage['lambda_ach']:.2f}")
-    print(f"Payload fits: cross-section {fuselage['fit_xsec']}, length {fuselage['fit_len']}")
+    print(f"\nFuselage for b = {design.b:.3f} m (tube, V_h 0.45, V_v 0.03): L_f = {fuselage['L_f']:.3f} m "
+          f"(L_f/b {fuselage['L_f_by_b']:.2f}), D = {fuselage['D']:.3f} m, tail arm {fuselage['l_t']:.3f} m "
+          f"(l_t/c {fuselage['l_t_by_c']:.2f}), S_h {fuselage['S_h']:.4f} m^2, S_v {fuselage['S_v']:.4f} m^2")
+    print(f"Fuselage problems: {check_fuselage(fuselage, design.b) or 'none'}")
 
     df = pd.DataFrame(feasible_points, columns=['wing_loading', 'Power_loading'])
     df.to_csv("feasible_points.csv", index=False)

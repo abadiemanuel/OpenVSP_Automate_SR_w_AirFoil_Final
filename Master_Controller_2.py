@@ -15,6 +15,7 @@ from Sizing import *
 
 # Airfoil folder path
 AIRFOIL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "airfoils")
+TAIL_AIRFOIL = "NACA0012.DAT"  # fixed section for every tail surface (H, V, V-/Y-tail panels)
 
 def airfoil_path(name):
     """Convert airfoil filename (e.g. '1.sg6043rev.dat') to full file path."""
@@ -111,8 +112,8 @@ class Master_Designer:
         Cth = geo['c_h_tip'] ##Horizontal tip Chord
         H_sweep, V_sweep = TAIL_SWEEP[data['Tail_Type']]
         V_sweep = V_sweep or 0.0
-        htail_af = airfoil_path(data.get('HTail_Airfoil', ''))
-        vtail_af = airfoil_path(data.get('VTail_Airfoil', ''))
+        htail_af = airfoil_path(TAIL_AIRFOIL)
+        vtail_af = airfoil_path(TAIL_AIRFOIL)
         if data['Tail_Type'] == "Conventional":
             tail_instance = Tail_Config(H_Xloc=x_h_LE, H_Zloc=0.47 * D_tail,
                                         H_Span=bh, H_Root=Crh,

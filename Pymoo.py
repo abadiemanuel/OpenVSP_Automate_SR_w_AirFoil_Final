@@ -69,8 +69,7 @@ mixed_vars = {
     "Tail_Type":Choice(options=["Conventional", "T-Tail", "Cruciform", "Dual-Tail", "V-Tail", "Inverted_V-Tail", "Y-Tail",
              "Inverted_Y-Tail"]),
     "Wing_Airfoil":Choice(options=AIRFOIL_OPTIONS),
-    "HTail_Airfoil":Choice(options=AIRFOIL_OPTIONS),
-    "VTail_Airfoil":Choice(options=AIRFOIL_OPTIONS),
+    # Tail airfoils are fixed to TAIL_AIRFOIL (NACA 0012) in Master_Controller_2.py
 }
 #print(pd.DataFrame(list(mixed_vars)))
 

@@ -166,6 +166,13 @@ class Fuselage:
 
             # Collection of variables for modification/Skinning
 
+        # Last cross-section: OpenVSP's default skinning angles are -45 deg, which makes the aft body
+        # bulge out before closing in. 0 deg makes the skin arrive parallel to the body axis.
+        # Bottom/Left mirror Top/Right (TBSym, RLSym) and the R angles follow the L ones (LRAngleEq).
+        x_sec_last = vsp.GetXSec(xsec_surf, num_xsec_order - 1)
+        vsp.SetParmVal(vsp.GetXSecParm(x_sec_last, "TopLAngle"), 0.0)
+        vsp.SetParmVal(vsp.GetXSecParm(x_sec_last, "RightLAngle"), 0.0)
+
         # Station positions along the body. OpenVSP keeps each interior station between its
         # neighbours, so sweep forwards and backwards until every station reaches its target.
         if self.xloc_percent is not None:

@@ -58,8 +58,8 @@ r_aft_min = min(fuselage_assumptions['D_aft_min'] / D_bay, 1.0)
 mixed_vars = {
     "Wing_Span": Real(bounds = (Span)), "Power": Real(bounds = (power)),"Taper": Real(bounds = (0.3,1)),"Sweep": Real(bounds = (0, 20)),"Vol_Hor": Real(bounds = (0.35,0.6)),"Vol_Vert": Real(bounds = (0.02, 0.1)),
     "r_nose": Real(bounds=(0.333, 0.5)),"r_aft": Real(bounds=(r_aft_min, 1.0)),"f_taper": Real(bounds=(0.2, 0.5)),
-    "toptan_0": Real(bounds=(40,120)),"toptan_1": Real(bounds=(40,120)),"toptan_2": Real(bounds=(40,120)),"toptan_3": Real(bounds=(40,120)),"toptan_4": Real(bounds=(0,10)),
-    "bottan_0": Real(bounds=(40,120)),"bottan_1": Real(bounds=(40,120)),"bottan_2": Real(bounds=(40,120)),"bottan_3": Real(bounds=(40,120)),"bottan_4": Real(bounds=(0,10)),"topstr_0": Real(bounds=(0.5, 1.83)),"topstr_1": Real(bounds=(0.5, 1.83)),
+    "toptan_0": Real(bounds=(40,120)),"toptan_1": Real(bounds=(40,120)),"toptan_2": Real(bounds=(40,120)),"toptan_3": Real(bounds=(40,120)),"toptan_4": Real(bounds=(40,120)),
+    "bottan_0": Real(bounds=(40,120)),"bottan_1": Real(bounds=(40,120)),"bottan_2": Real(bounds=(40,120)),"bottan_3": Real(bounds=(40,120)),"bottan_4": Real(bounds=(40,120)),"topstr_0": Real(bounds=(0.5, 1.83)),"topstr_1": Real(bounds=(0.5, 1.83)),
     "topstr_2": Real(bounds=(0.5, 1.83)),"topstr_3": Real(bounds=(0.5, 1.83)),"topstr_4": Real(bounds=(0.5, 1.83)),"botstr_0": Real(bounds=(0.5, 1.83)),
     "botstr_1": Real(bounds=(0.5, 1.83)),"botstr_2": Real(bounds=(0.5, 1.83)),"botstr_3": Real(bounds=(0.5, 1.83)),"botstr_4": Real(bounds=(0.5, 1.83)),
 
@@ -395,13 +395,13 @@ class Genetic(Problem):
 problem = Genetic()
 
 algorithm = NSGA2(
-    pop_size=50,
+    pop_size=2,
     sampling=MixedVariableSampling(),
     mating=MixedVariableMating(eliminate_duplicates= MixedVariableDuplicateElimination()),
     eliminate_duplicates=False
 )
 
-n_gen = 50
+n_gen = 2
 
 start = time.time()
 res = minimize(

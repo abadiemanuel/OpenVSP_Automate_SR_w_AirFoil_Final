@@ -135,7 +135,8 @@ class Master_Designer:
                                         H_sweep=H_sweep,
                                         V_Xloc=x_v_LE, V_Span=bv,
                                         V_Root=Crv,V_Zloc=0.47 * D_tail,
-                                        V_Tip=Ctv, V_diehedral=90, Y_Rot=-4,
+                                        V_Tip=Ctv, V_diehedral=90,
+                                        V_sweep=V_sweep,Y_Rot=-4,
                                         H_Airfoil=htail_af, V_Airfoil=vtail_af)
             tail_instance.Conventional()
 
@@ -149,7 +150,8 @@ class Master_Designer:
                                         H_sweep=H_sweep,
                                         V_Xloc=x_v_LE, V_Span=bv,
                                         V_Root=Crv,V_Zloc=0.47 * D_tail,
-                                        V_Tip=Ctv, V_diehedral=90, Y_Rot=-4,
+                                        V_Tip=Ctv, V_diehedral=90,
+                                        V_sweep=V_sweep, Y_Rot=-4,
                                         H_Airfoil=htail_af, V_Airfoil=vtail_af)
             tail_instance.Conventional()
 
@@ -184,7 +186,7 @@ class Master_Designer:
                                         H_Root=Crh,
                                         H_Tip=Cth, H_diehedral=0,
                                         H_sweep=H_sweep,
-                                        V_Xloc=x_v_LE, V_Yloc=0.53 * bh,
+                                        V_Xloc=x_v_LE, V_Yloc=0.5 * bh,
                                         V_Zloc=0.4 * D_tail, V_Span=bv,
                                         V_Root=Crv,
                                         V_Tip=Ctv, V_diehedral=90,

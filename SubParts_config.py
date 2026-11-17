@@ -4,10 +4,20 @@ import random
 #from Master_Controller import sweep
 from Trial_2 import Wing
 import math
+import openvsp as vsp
 
 """
 This section is responsible for the configurations
 """
+
+def fin_options(geom_id):
+    """Vertical-tail display options: rotate all airfoils to match dihedral, round root and tip caps."""
+    vsp.SetParmVal(geom_id, "RotateAirfoilMatchDideralFlag", "WingGeom", 1.0)
+    vsp.SetParmVal(geom_id, "CapUMinOption", "EndCap", float(vsp.ROUND_END_CAP))  # root
+    vsp.SetParmVal(geom_id, "CapUMaxOption", "EndCap", float(vsp.ROUND_END_CAP))  # tip
+    vsp.Update()
+
+
 class Tail_Config:
     def __init__(self, H_Xloc=0,H_Zloc=0,H_Span=15, H_Root=4, H_Tip=1, H_diehedral=45,H_sweep = 0,
                  V_Xloc=5,V_Zloc=0,V_Yloc=0.001,V_Span=15, V_Root=4, V_Tip=1, V_diehedral=90, V_sweep =0,Y_Rot=0,
@@ -47,6 +57,8 @@ class Tail_Config:
         V_Tail.Plan()
         V_Tail.Sect(root_af=self.V_Airfoil, tip_af=self.V_Airfoil)
         V_Tail.XForm()
+        fin_options(V_Tail.wid)
+
 
 
     def V_Tail(self):

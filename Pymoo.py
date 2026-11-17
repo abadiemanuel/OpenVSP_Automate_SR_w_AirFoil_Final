@@ -395,13 +395,13 @@ class Genetic(Problem):
 problem = Genetic()
 
 algorithm = NSGA2(
-    pop_size=2,
+    pop_size=3,
     sampling=MixedVariableSampling(),
     mating=MixedVariableMating(eliminate_duplicates= MixedVariableDuplicateElimination()),
     eliminate_duplicates=False
 )
 
-n_gen = 2
+n_gen = 5
 
 start = time.time()
 res = minimize(

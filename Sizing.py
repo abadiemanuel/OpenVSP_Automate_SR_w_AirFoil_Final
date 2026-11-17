@@ -241,7 +241,7 @@ inputs['payload_vol'] = inputs['payload_l'] * inputs['payload_w'] * inputs['payl
 payload_radius = 2*np.cbrt((3*inputs['payload_vol'])/(4*np.pi)) #This is diameter rather
 
 
-#Fuselage and tail buildup assumptions (red in the workflow sketch)
+#Fuselage and tail buildup assumptions, Raymer (p.76) Tail parameters are not critical to the design, so we will use the same assumptions for all tail types
 fuselage_assumptions = {
     'K_PACK': 1.15, #payload packing factor (bay = 1.15 x payload box)
     'C_NOSE': 1.25, #nose length / bay diameter
@@ -250,15 +250,15 @@ fuselage_assumptions = {
     'TR_h': 0.5, #horizontal tail taper ratio
     'AR_v': 1.5, #vertical tail aspect ratio (h_v^2/S_v)
     'TR_v': 0.6, #vertical tail taper ratio
-    'L_by_b_max': 0.87, #longest fuselage in the DBF database, L_f/b
+    'L_by_b_max': 0.87, #longest fuselage in the DBF database, L_f/b, used to warn when the fuselage is unusually long
     'taper_angle_max': 15.0, #deg, aft-body half-angle before the flow separates
     'D_aft_min': 0.02, #m, thinnest boom (APPA used a 19.8 mm tube)
 }
 
 #Tail leading-edge sweep (H, V) per tail type, deg; Master_Controller_2 builds the tails with these
 TAIL_SWEEP = {
-    "Conventional": (11.8, 0.0), "T-Tail": (11.8, 0.0), "Cruciform": (11.8, 0.0),
-    "Y-Tail": (21.8, 21.8), "Inverted_Y-Tail": (21.8, 21.8), "Dual-Tail": (15.0, 21.8),
+    "Conventional": (11.8, 10.0), "T-Tail": (11.8, 10.0), "Cruciform": (11.8, 10.0), "Inverted_T": (11.8, 10.0),
+    "Y-Tail": (21.8, 21.8), "Inverted_Y-Tail": (21.8, 21.8), "Dual-Tail": (15.0, 10.0),
     "V-Tail": (21.8, None), "Inverted_V-Tail": (21.8, None), #V-tails have no separate fin
 }
 

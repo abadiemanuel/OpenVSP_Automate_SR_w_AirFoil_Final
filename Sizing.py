@@ -245,7 +245,7 @@ payload_radius = 2*np.cbrt((3*inputs['payload_vol'])/(4*np.pi)) #This is diamete
 fuselage_assumptions = {
     'K_PACK': 1.15, #payload packing factor (bay = 1.15 x payload box)
     'C_NOSE': 1.25, #nose length / bay diameter
-    'K_c': 1.0, #Sadraey tail-arm correction (1.0-1.4); 1.0 matches APPA
+    'K_c': 1.1, #Sadraey tail-arm correction (1.0-1.4); 1.0 matches APPA: 1.1 for GA (accordinging to Sadraey)
     'AR_h': 4.0, #horizontal tail aspect ratio (b_h^2/S_h)
     'TR_h': 0.5, #horizontal tail taper ratio
     'AR_v': 1.5, #vertical tail aspect ratio (h_v^2/S_v)
